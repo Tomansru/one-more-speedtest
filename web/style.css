@@ -310,6 +310,7 @@ button { font: inherit; color: inherit; }
   border-radius: var(--radius);
   overflow: hidden;
   min-height: 108px;
+  container-type: inline-size;
 }
 .metric h2 {
   margin: 0 0 6px;
@@ -331,20 +332,25 @@ button { font: inherit; color: inherit; }
 .metric .unit { color: var(--muted); font-size: 0.85rem; }
 .metric.is-active { border-color: color-mix(in srgb, var(--accent) 55%, transparent); }
 
-/* Ping / jitter measured during download and upload. */
+/* Ping / jitter measured during download and upload. Stacked so the layout
+   doesn't jump when "—" is replaced by a value; side by side only in cards
+   wide enough to fit both values (very large screens). */
 .loaded {
   margin: 10px 0 0;
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 2px 14px;
   font-size: 0.8rem;
   color: var(--muted);
 }
 .loaded .loaded-caption {
-  flex-basis: 100%;
+  grid-column: 1 / -1;
   font-size: 0.68rem;
   text-transform: uppercase;
   letter-spacing: 0.12em;
+}
+@container (min-width: 250px) {
+  .loaded { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 .loaded div { display: flex; align-items: center; gap: 6px; }
 .loaded dt::before {
@@ -421,7 +427,7 @@ button { font: inherit; color: inherit; }
   height: auto;
   border-radius: 14px;
   border: 1px solid var(--border);
-  aspect-ratio: 1200 / 630;
+  aspect-ratio: 1200 / 600;
   background: var(--surface-2);
 }
 .results-actions {
@@ -469,6 +475,10 @@ button { font: inherit; color: inherit; }
 }
 
 /* ---------- Responsive ---------- */
+
+@media (min-width: 1800px) {
+  .app { max-width: 1240px; }
+}
 
 @media (max-width: 720px) {
   .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }

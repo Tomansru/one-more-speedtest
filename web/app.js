@@ -590,7 +590,7 @@ async function runTest() {
 
 const CARD = {
   w: 1200,
-  h: 630,
+  h: 600,
   bg: "#0b0e14",
   surface: "#141a26",
   border: "rgba(255,255,255,0.08)",
@@ -619,7 +619,7 @@ function renderResultCanvas(r) {
   // Background with soft glows.
   ctx.fillStyle = CARD.bg;
   ctx.fillRect(0, 0, CARD.w, CARD.h);
-  for (const [x, y, color] of [[160, -40, "rgba(34,211,238,0.18)"], [1080, 680, "rgba(167,139,250,0.18)"]]) {
+  for (const [x, y, color] of [[160, -40, "rgba(34,211,238,0.18)"], [1080, CARD.h + 50, "rgba(167,139,250,0.18)"]]) {
     const g = ctx.createRadialGradient(x, y, 0, x, y, 520);
     g.addColorStop(0, color);
     g.addColorStop(1, "rgba(0,0,0,0)");
@@ -721,11 +721,20 @@ function renderResultCanvas(r) {
     if (metric) drawLoadedLine(ctx, r.loaded, metric, x, 560);
   });
 
+  // Server sits on the "under load" line, right-aligned under the mode columns.
   ctx.fillStyle = CARD.muted;
   ctx.font = `400 18px ${FONT}`;
-  ctx.fillText(`Server: ${r.host}`, 56, 604);
+  ctx.textAlign = "right";
+  ctx.fillText(ellipsize(ctx, `Server: ${r.host}`, colW * 2 - 24), CARD.w - 56, 560);
+  ctx.textAlign = "left";
 
   return canvas;
+}
+
+function ellipsize(ctx, text, maxWidth) {
+  if (ctx.measureText(text).width <= maxWidth) return text;
+  while (text.length > 1 && ctx.measureText(`${text}…`).width > maxWidth) text = text.slice(0, -1);
+  return `${text}…`;
 }
 
 // Draws "● 45 ● 60 ms under load" with download/upload coloured dots.
