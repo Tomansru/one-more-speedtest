@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark light">
+  <title>One More Speedtest</title>
+  <meta name="description" content="A simple, self-hosted internet speed test: ping, jitter, download and upload.">
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main class="app">
+    <header class="topbar">
+      <div class="brand">
+        <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true">
+          <path d="M5 22a11 11 0 0 1 22 0" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"/>
+          <path d="M16 22l6-8" stroke="currentColor" stroke-width="3" stroke-linecap="round"/>
+          <circle cx="16" cy="22" r="2.5" fill="currentColor"/>
+        </svg>
+        <span>one more <strong>speedtest</strong></span>
+      </div>
+      <div class="client" id="client-info" aria-live="polite"></div>
+    </header>
+
+    <section class="controls" aria-label="Test settings">
+      <fieldset class="segmented" id="connections">
+        <legend>Connections</legend>
+        <label><input type="radio" name="connections" value="single"><span>Single</span></label>
+        <label><input type="radio" name="connections" value="multi" checked><span>Multi</span></label>
+      </fieldset>
+      <fieldset class="segmented" id="duration">
+        <legend>Duration</legend>
+        <label><input type="radio" name="duration" value="basic" checked><span>Basic</span></label>
+        <label><input type="radio" name="duration" value="long"><span>Long run</span></label>
+      </fieldset>
+    </section>
+    <p class="mode-hint" id="mode-hint"></p>
+
+    <section class="stage">
+      <div class="gauge" id="gauge" data-phase="idle">
+        <svg viewBox="0 0 300 256" aria-hidden="true">
+          <defs>
+            <linearGradient id="grad-download" x1="0" y1="1" x2="1" y2="0">
+              <stop offset="0" class="s-download-a"/>
+              <stop offset="1" class="s-download-b"/>
+            </linearGradient>
+            <linearGradient id="grad-upload" x1="0" y1="1" x2="1" y2="0">
+              <stop offset="0" class="s-upload-a"/>
+              <stop offset="1" class="s-upload-b"/>
+            </linearGradient>
+          </defs>
+          <path class="gauge-track" id="gauge-track"/>
+          <path class="gauge-fill" id="gauge-fill"/>
+          <g id="gauge-ticks"></g>
+        </svg>
+        <div class="gauge-center">
+          <button class="start" id="start" type="button">Go</button>
+          <div class="readout" id="readout" hidden>
+            <span class="readout-phase" id="readout-phase"></span>
+            <span class="readout-value" id="readout-value">0</span>
+            <span class="readout-unit" id="readout-unit">Mbps</span>
+          </div>
+        </div>
+      </div>
+      <div class="progress" aria-hidden="true"><div class="progress-bar" id="progress-bar"></div></div>
+      <div class="status-row">
+        <p class="status" id="status" aria-live="polite">Press Go to start the test</p>
+        <button class="link" id="cancel" type="button" hidden>Cancel</button>
+      </div>
+    </section>
+
+    <section class="metrics" aria-label="Results">
+      <article class="metric" id="m-ping">
+        <h2>Ping</h2>
+        <p><span class="value" data-value>—</span><span class="unit">ms</span></p>
+      </article>
+      <article class="metric" id="m-jitter">
+        <h2>Jitter</h2>
+        <p><span class="value" data-value>—</span><span class="unit">ms</span></p>
+      </article>
+      <article class="metric metric-download" id="m-download">
+        <h2><i class="dot"></i>Download</h2>
+        <p><span class="value" data-value>—</span><span class="unit">Mbps</span></p>
+        <canvas class="spark" data-spark></canvas>
+      </article>
+      <article class="metric metric-upload" id="m-upload">
+        <h2><i class="dot"></i>Upload</h2>
+        <p><span class="value" data-value>—</span><span class="unit">Mbps</span></p>
+        <canvas class="spark" data-spark></canvas>
+      </article>
+    </section>
+
+    <footer class="footer">
+      <span>Self-hosted · no trackers · no third-party requests</span>
+    </footer>
+  </main>
+
+  <dialog class="results" id="results" aria-labelledby="results-title">
+    <form method="dialog" class="results-close"><button aria-label="Close" type="submit">&times;</button></form>
+    <h2 id="results-title">Your results</h2>
+    <img class="results-image" id="results-image" alt="Speed test results card">
+    <div class="results-actions">
+      <button class="btn btn-primary" id="save-image" type="button">Download image</button>
+      <button class="btn" id="copy-image" type="button">Copy image</button>
+      <button class="btn btn-ghost" id="again" type="button">Test again</button>
+    </div>
+    <p class="results-note" id="results-note" aria-live="polite"></p>
+  </dialog>
+
+  <div class="toast" id="toast" role="status" hidden></div>
+
+  <script src="app.js" type="module"></script>
+</body>
+</html>
