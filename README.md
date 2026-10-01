@@ -1,6 +1,7 @@
 # one-more-speedtest
 
 [![CI](https://github.com/Tomansru/one-more-speedtest/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Tomansru/one-more-speedtest/actions/workflows/ci.yml)
+[![Docker](https://github.com/Tomansru/one-more-speedtest/actions/workflows/docker.yml/badge.svg?branch=main)](https://github.com/Tomansru/one-more-speedtest/pkgs/container/one-more-speedtest)
 
 A simple, self-hosted internet speed test. One static Go binary, no third-party
 dependencies: the backend uses only the Go standard library and the UI is plain
@@ -51,7 +52,21 @@ go build -o speedtest .
 ./speedtest -addr :8080
 ```
 
-Or with Docker:
+Or with Docker, using the image from GitHub Container Registry (`linux/amd64`
+and `linux/arm64`):
+
+```sh
+docker run --rm -p 8080:8080 ghcr.io/tomansru/one-more-speedtest:latest
+```
+
+| Tag                          | Built from                          |
+|------------------------------|-------------------------------------|
+| `latest`, `1`, `1.2`, `1.2.3` | Release tags like `v1.2.3`          |
+| `dev-latest`, `sha-<commit>` | Every push to `main`                |
+
+Pull requests only build the image to check it, without publishing it.
+
+To build it yourself:
 
 ```sh
 docker build -t one-more-speedtest .
