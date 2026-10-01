@@ -1,5 +1,7 @@
 # one-more-speedtest
 
+[![CI](https://github.com/Tomansru/one-more-speedtest/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Tomansru/one-more-speedtest/actions/workflows/ci.yml)
+
 A simple, self-hosted internet speed test. One static Go binary, no third-party
 dependencies: the backend uses only the Go standard library and the UI is plain
 HTML, CSS and JavaScript embedded into the binary.
