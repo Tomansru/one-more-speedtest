@@ -9,6 +9,10 @@ It measures:
 - **Ping** – median round-trip time of small HTTP requests (after a warm-up request).
 - **Jitter** – mean absolute difference between consecutive ping samples.
 - **Download** and **Upload** throughput in Mbps.
+- **Ping and jitter under load** – the same latency probe keeps running (every
+  200 ms) while the download and the upload saturate the link. Comparing it with
+  the idle ping shows how much your connection suffers from
+  [bufferbloat](https://www.bufferbloat.net/projects/bloat/wiki/Introduction/).
 
 At the end a results card is shown that can be **downloaded as a PNG** or
 **copied to the clipboard** as an image.
@@ -18,12 +22,16 @@ At the end a results card is shown that can be **downloaded as a PNG** or
 | Setting      | Option    | What it does                                  |
 |--------------|-----------|-----------------------------------------------|
 | Connections  | Single    | 1 HTTP stream per direction                    |
-|              | Multi     | 6 parallel HTTP streams per direction          |
+|              | Multi     | 5 parallel HTTP streams per direction          |
 | Duration     | Basic run | 20 ping samples, 10 s download, 10 s upload    |
 |              | Long run  | 50 ping samples, 30 s download, 30 s upload    |
 
 The first seconds of each transfer phase (1.5 s for a basic run, 3 s for a long
-run) are a warm-up for TCP slow start and are excluded from the final speed.
+run) are a warm-up for TCP slow start and are excluded from the final speed and
+from the loaded latency.
+
+Browsers open at most 6 HTTP/1.1 connections per host, so multi mode uses 5
+transfer streams and keeps one connection free for the latency probe.
 
 ## Running
 

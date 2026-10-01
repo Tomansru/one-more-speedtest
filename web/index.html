@@ -60,6 +60,7 @@
             <span class="readout-phase" id="readout-phase"></span>
             <span class="readout-value" id="readout-value">0</span>
             <span class="readout-unit" id="readout-unit">Mbps</span>
+            <span class="readout-latency" id="readout-latency"></span>
           </div>
         </div>
       </div>
@@ -74,10 +75,20 @@
       <article class="metric" id="m-ping">
         <h2>Ping</h2>
         <p><span class="value" data-value>—</span><span class="unit">ms</span></p>
+        <dl class="loaded" title="Ping measured while the link is busy">
+          <div class="loaded-caption">Under load</div>
+          <div class="loaded-download"><dt>Down</dt><dd data-loaded="download">—</dd></div>
+          <div class="loaded-upload"><dt>Up</dt><dd data-loaded="upload">—</dd></div>
+        </dl>
       </article>
       <article class="metric" id="m-jitter">
         <h2>Jitter</h2>
         <p><span class="value" data-value>—</span><span class="unit">ms</span></p>
+        <dl class="loaded" title="Jitter measured while the link is busy">
+          <div class="loaded-caption">Under load</div>
+          <div class="loaded-download"><dt>Down</dt><dd data-loaded="download">—</dd></div>
+          <div class="loaded-upload"><dt>Up</dt><dd data-loaded="upload">—</dd></div>
+        </dl>
       </article>
       <article class="metric metric-download" id="m-download">
         <h2><i class="dot"></i>Download</h2>

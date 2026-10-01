@@ -250,6 +250,13 @@ button { font: inherit; color: inherit; }
   font-variant-numeric: tabular-nums;
 }
 .readout-unit { color: var(--muted); font-size: 0.95rem; }
+.readout-latency {
+  min-height: 1.3em;
+  margin-top: 4px;
+  font-size: 0.8rem;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
 
 .progress {
   width: min(320px, 80vw);
@@ -323,6 +330,39 @@ button { font: inherit; color: inherit; }
 }
 .metric .unit { color: var(--muted); font-size: 0.85rem; }
 .metric.is-active { border-color: color-mix(in srgb, var(--accent) 55%, transparent); }
+
+/* Ping / jitter measured during download and upload. */
+.loaded {
+  margin: 10px 0 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 14px;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+.loaded .loaded-caption {
+  flex-basis: 100%;
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+}
+.loaded div { display: flex; align-items: center; gap: 6px; }
+.loaded dt::before {
+  content: "";
+  display: inline-block;
+  width: 6px; height: 6px;
+  margin-right: 6px;
+  border-radius: 50%;
+  vertical-align: middle;
+}
+.loaded-download dt::before { background: var(--download-b); }
+.loaded-upload dt::before { background: var(--upload-b); }
+.loaded dd {
+  margin: 0;
+  color: var(--text);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
 
 .dot { width: 8px; height: 8px; border-radius: 50%; }
 .metric-download .dot { background: var(--download-b); }

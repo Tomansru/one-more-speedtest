@@ -3,7 +3,9 @@
 
 const CONNECTIONS = {
   single: { streams: 1, label: "Single connection" },
-  multi: { streams: 6, label: "Multi connection" },
+  // Browsers allow 6 HTTP/1.1 connections per host; one is left free for
+  // the latency probe that runs during the transfer.
+  multi: { streams: 5, label: "Multi connection" },
 };
 
 const DURATIONS = {
@@ -16,6 +18,7 @@ const UPLOAD_MIN_CHUNK = 1 << 20;
 const UPLOAD_MAX_CHUNK = 32 << 20;
 const TICK_MS = 100;
 const LIVE_WINDOW_S = 1; // window for the live (gauge) speed
+const LOADED_PING_INTERVAL_MS = 200; // latency probe rate during transfers
 
 const FONT = 'ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif';
 
@@ -33,6 +36,7 @@ const ui = {
   readoutPhase: $("#readout-phase"),
   readoutValue: $("#readout-value"),
   readoutUnit: $("#readout-unit"),
+  readoutLatency: $("#readout-latency"),
   progress: $("#progress-bar"),
   modeHint: $("#mode-hint"),
   client: $("#client-info"),
@@ -130,6 +134,39 @@ function latencyStats(samples) {
   };
 }
 
+function sleep(ms, signal) {
+  return new Promise((resolve) => {
+    const done = () => {
+      clearTimeout(timer);
+      resolve();
+    };
+    const timer = setTimeout(done, ms);
+    signal.addEventListener("abort", done, { once: true });
+  });
+}
+
+// Pings the server while a transfer saturates the link ("loaded latency"),
+// which reveals bufferbloat. One probe is in flight at a time; samples taken
+// during the warm-up are skipped, like the warm-up bytes.
+async function probeLoadedLatency(signal, grace, onUpdate) {
+  const start = performance.now();
+  const samples = [];
+  while (!signal.aborted) {
+    const t0 = performance.now();
+    try {
+      const rtt = await pingOnce(signal);
+      if ((t0 - start) / 1000 >= grace && !signal.aborted) {
+        samples.push(rtt);
+        onUpdate(latencyStats(samples));
+      }
+    } catch {
+      // A lost probe under heavy load is not fatal; the transfer decides success.
+    }
+    await sleep(LOADED_PING_INTERVAL_MS - (performance.now() - t0), signal);
+  }
+  return samples.length ? latencyStats(samples) : null;
+}
+
 async function measureLatency(count, signal, onUpdate) {
   await pingOnce(signal); // warm-up: opens the connection, not counted
   const samples = [];
@@ -219,10 +256,10 @@ async function uploadWorker(signal, add) {
   }
 }
 
-// Runs `streams` parallel workers for `seconds` and reports throughput.
-// The first `grace` seconds (TCP slow start, connection setup) are excluded
-// from the final result.
-function measureThroughput(kind, { streams, seconds, grace }, signal, onTick) {
+// Runs `streams` parallel workers for `seconds` and reports throughput and
+// latency under load. The first `grace` seconds (TCP slow start, connection
+// setup) are excluded from the final result.
+function measureThroughput(kind, { streams, seconds, grace }, signal, onTick, onLatency) {
   const worker = kind === "download" ? downloadWorker : uploadWorker;
   const ctrl = new AbortController();
   const stopWorkers = () => ctrl.abort();
@@ -242,6 +279,7 @@ function measureThroughput(kind, { streams, seconds, grace }, signal, onTick) {
       lastError = err;
     }),
   );
+  const latency = probeLoadedLatency(ctrl.signal, grace, onLatency);
 
   const start = performance.now();
   const history = [{ t: 0, bytes: 0 }];
@@ -254,7 +292,7 @@ function measureThroughput(kind, { streams, seconds, grace }, signal, onTick) {
       signal.removeEventListener("abort", stopWorkers);
       await Promise.allSettled(workers);
       if (err) reject(err);
-      else resolve(result());
+      else resolve({ ...result(), latency: await latency });
     };
 
     const result = () => {
@@ -413,6 +451,14 @@ function setMetric(kind, text) {
   ui.metrics[kind].querySelector("[data-value]").textContent = text;
 }
 
+// Shows ping/jitter measured during the `kind` transfer; null clears it.
+function setLoaded(kind, stats) {
+  for (const metric of ["ping", "jitter"]) {
+    const value = stats ? `${fmtMs(stats[metric])} ms` : "—";
+    ui.metrics[metric].querySelector(`[data-loaded="${kind}"]`).textContent = value;
+  }
+}
+
 function setActive(kind) {
   for (const [k, el] of Object.entries(ui.metrics)) el.classList.toggle("is-active", k === kind);
 }
@@ -422,6 +468,7 @@ function setPhase(phase, label, unit) {
   ui.readoutPhase.textContent = label;
   ui.readoutUnit.textContent = unit;
   ui.readoutValue.textContent = "0";
+  ui.readoutLatency.textContent = "";
   ui.progress.style.width = "0";
 }
 
@@ -440,6 +487,8 @@ function updateModeHint() {
 
 function resetMetrics() {
   for (const kind of Object.keys(ui.metrics)) setMetric(kind, "—");
+  setLoaded("download", null);
+  setLoaded("upload", null);
   renderCardSpark("download", []);
   renderCardSpark("upload", []);
 }
@@ -457,7 +506,6 @@ async function runTest() {
   runCtrl = new AbortController();
   const { signal } = runCtrl;
 
-  performance.clearResourceTimings();
   performance.setResourceTimingBufferSize?.(1000);
   resetMetrics();
   resetGauge();
@@ -468,6 +516,7 @@ async function runTest() {
     setPhase("ping", "Ping", "ms");
     setActive("ping");
     ui.status.textContent = "Measuring latency…";
+    performance.clearResourceTimings();
     const latency = await measureLatency(mode.pings, signal, (s, progress) => {
       setMetric("ping", fmtMs(s.ping));
       setMetric("jitter", fmtMs(s.jitter));
@@ -482,14 +531,25 @@ async function runTest() {
       setActive(kind);
       resetGauge();
       ui.status.textContent = `Testing ${kind} speed…`;
-      results[kind] = await measureThroughput(kind, mode, signal, (live, progress, series) => {
-        setGauge(live);
-        ui.readoutValue.textContent = fmtSpeed(live);
-        setMetric(kind, fmtSpeed(live));
-        ui.progress.style.width = `${progress * 100}%`;
-        renderCardSpark(kind, series);
-      });
+      performance.clearResourceTimings(); // keep the buffer free for latency probes
+      results[kind] = await measureThroughput(
+        kind,
+        mode,
+        signal,
+        (live, progress, series) => {
+          setGauge(live);
+          ui.readoutValue.textContent = fmtSpeed(live);
+          setMetric(kind, fmtSpeed(live));
+          ui.progress.style.width = `${progress * 100}%`;
+          renderCardSpark(kind, series);
+        },
+        (loaded) => {
+          setLoaded(kind, loaded);
+          ui.readoutLatency.textContent = `Ping ${fmtMs(loaded.ping)} ms · jitter ${fmtMs(loaded.jitter)} ms`;
+        },
+      );
       setMetric(kind, fmtSpeed(results[kind].mbps));
+      setLoaded(kind, results[kind].latency);
     }
 
     lastResult = {
@@ -498,6 +558,7 @@ async function runTest() {
       upload: results.upload.mbps,
       downloadSeries: results.download.series,
       uploadSeries: results.upload.series,
+      loaded: { download: results.download.latency, upload: results.upload.latency },
       mode,
       date: new Date(),
       host: location.host,
@@ -639,31 +700,50 @@ function renderResultCanvas(r) {
     ctx.restore();
   }
 
-  // Footer stats.
+  // Footer stats. Ping and jitter also show the values measured under load.
   const stats = [
-    ["PING", `${fmtMs(r.ping)} ms`],
-    ["JITTER", `${fmtMs(r.jitter)} ms`],
+    ["PING", `${fmtMs(r.ping)} ms`, "ping"],
+    ["JITTER", `${fmtMs(r.jitter)} ms`, "jitter"],
     ["CONNECTIONS", r.mode.connections === "single" ? "Single" : `Multi (${r.mode.streams})`],
     ["DURATION", r.mode.duration === "long" ? `Long run (${r.mode.seconds} s)` : `Basic (${r.mode.seconds} s)`],
   ];
   const colW = (CARD.w - 112) / stats.length;
-  stats.forEach(([label, value], i) => {
+  stats.forEach(([label, value, metric], i) => {
     const x = 56 + i * colW;
     ctx.fillStyle = CARD.muted;
     ctx.font = `600 16px ${FONT}`;
     ctx.letterSpacing = "2px";
-    ctx.fillText(label, x, 496);
+    ctx.fillText(label, x, 486);
     ctx.letterSpacing = "0px";
     ctx.fillStyle = CARD.text;
     ctx.font = `600 32px ${FONT}`;
-    ctx.fillText(value, x, 538);
+    ctx.fillText(value, x, 526);
+    if (metric) drawLoadedLine(ctx, r.loaded, metric, x, 560);
   });
 
   ctx.fillStyle = CARD.muted;
   ctx.font = `400 18px ${FONT}`;
-  ctx.fillText(`Server: ${r.host}`, 56, 596);
+  ctx.fillText(`Server: ${r.host}`, 56, 604);
 
   return canvas;
+}
+
+// Draws "● 45 ● 60 ms under load" with download/upload coloured dots.
+function drawLoadedLine(ctx, loaded, metric, x, y) {
+  ctx.font = `500 18px ${FONT}`;
+  for (const kind of ["download", "upload"]) {
+    ctx.fillStyle = CARD[kind][1];
+    ctx.beginPath();
+    ctx.arc(x + 5, y - 6, 5, 0, Math.PI * 2);
+    ctx.fill();
+    x += 16;
+    const text = loaded[kind] ? fmtMs(loaded[kind][metric]) : "—";
+    ctx.fillStyle = CARD.text;
+    ctx.fillText(text, x, y);
+    x += ctx.measureText(text).width + 14;
+  }
+  ctx.fillStyle = CARD.muted;
+  ctx.fillText("ms under load", x - 6, y);
 }
 
 function canvasToBlob(canvas) {
