@@ -20,17 +20,10 @@ It measures:
 At the end a results card is shown that can be **downloaded as a PNG** or
 **copied to the clipboard** as an image.
 
-![Speed test in progress](docs/screenshots/test-dark.png)
-
-## Screenshots
-
-| Results dialog | Shareable results image |
-|---|---|
-| ![Results dialog with download and copy buttons](docs/screenshots/results-dialog.png) | ![Results image](docs/screenshots/result-card.png) |
-
-| Light theme | Mobile |
-|---|---|
-| ![Finished test in the light theme](docs/screenshots/finished-light.png) | <img src="docs/screenshots/mobile-dark.png" alt="Finished test on a phone" width="260"> |
+<p align="center">
+  <a href="docs/screenshots/test-dark.png"><img src="docs/screenshots/test-dark.png" alt="Dark theme: test in progress" width="48%"></a>
+  <a href="docs/screenshots/finished-light.png"><img src="docs/screenshots/finished-light.png" alt="Light theme: finished test" width="48%"></a>
+</p>
 
 ## Test modes
 
