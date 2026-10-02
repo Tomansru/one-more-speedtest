@@ -56,6 +56,9 @@ func newServer(cfg serverConfig) (http.Handler, error) {
 	mux.HandleFunc("GET /api/download", s.handleDownload)
 	mux.HandleFunc("POST /api/upload", s.handleUpload)
 	mux.HandleFunc("GET /api/info", s.handleInfo)
+	mux.HandleFunc("GET /monitor", func(w http.ResponseWriter, r *http.Request) {
+		http.ServeFileFS(w, r, static, "monitor.html")
+	})
 	mux.Handle("GET /", http.FileServerFS(static))
 	return withCommonHeaders(mux), nil
 }

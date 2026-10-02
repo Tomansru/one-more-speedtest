@@ -143,6 +143,25 @@ func TestStaticIndex(t *testing.T) {
 	}
 }
 
+func TestStaticMonitor(t *testing.T) {
+	h := newTestServer(t, serverConfig{})
+	for _, path := range []string{"/monitor", "/monitor.html", "/monitor.js", "/monitor-worker.js"} {
+		t.Run(path, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+			}
+		})
+	}
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/monitor", nil))
+	if !strings.Contains(rec.Body.String(), "Stability monitor") {
+		t.Errorf("/monitor does not serve the monitor page")
+	}
+}
+
 type zeroReader struct{}
 
 func (zeroReader) Read(p []byte) (int, error) {

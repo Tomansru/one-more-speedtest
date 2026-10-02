@@ -25,6 +25,28 @@ At the end a results card is shown that can be **downloaded as a PNG** or
   <a href="docs/screenshots/finished-light.png"><img src="docs/screenshots/finished-light.png" alt="Light theme: finished test" width="48%"></a>
 </p>
 
+## Stability monitor
+
+A second page, `/monitor` (linked quietly from the footer of the main page),
+runs an endless latency test. Start it, leave the tab in the background while
+you play or work, and come back to see how stable the connection was:
+
+- **Drops** – two or more lost pings in a row, with their start, length and
+  total downtime / uptime share.
+- **Lost pings** – no reply within 2 s, or a network error; packet loss in %.
+- **Latency spikes** – replies more than twice the median and at least 50 ms
+  above it.
+- **Ping** – min / max / average / median / P95 / P99 over the whole session.
+- **Jitter** – current value over the last 10 s, its calmest and worst 10 s,
+  the session average and the largest single jump.
+- A timeline of ping and jitter (1 min, 10 min, 1 h or the whole session),
+  an event log and a CSV export of every sample.
+
+The probe runs in a Web Worker, so it keeps its pace (250 ms, 500 ms or 1 s)
+while the tab is hidden; the tab title shows the current status (🟢 / 🟡 / 🔴).
+Time the computer spends asleep is marked as paused and not counted as
+downtime.
+
 ## Test modes
 
 | Setting      | Option    | What it does                                  |

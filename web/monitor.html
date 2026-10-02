@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark light">
+  <title>Stability monitor · One More Speedtest</title>
+  <meta name="description" content="Endless connection stability monitor: drops, lost pings, latency spikes and jitter over time.">
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main class="app">
+    <header class="topbar">
+      <a class="brand" href="./">
+        <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true">
+          <path d="M5 22a11 11 0 0 1 22 0" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"/>
+          <path d="M16 22l6-8" stroke="currentColor" stroke-width="3" stroke-linecap="round"/>
+          <circle cx="16" cy="22" r="2.5" fill="currentColor"/>
+        </svg>
+        <span>one more <strong>speedtest</strong></span>
+      </a>
+      <a class="quiet-link" href="./">&larr; Speed test</a>
+    </header>
+
+    <section class="mon-intro">
+      <h1>Stability monitor</h1>
+      <p>Pings the server non-stop until you stop it. Leave this tab open in the background
+        while you play or work: drops, lost pings and latency spikes are recorded here.</p>
+    </section>
+
+    <section class="mon-controls" aria-label="Monitor settings">
+      <fieldset class="segmented" id="interval">
+        <legend>Ping interval</legend>
+        <label><input type="radio" name="interval" value="250"><span>250 ms</span></label>
+        <label><input type="radio" name="interval" value="500" checked><span>500 ms</span></label>
+        <label><input type="radio" name="interval" value="1000"><span>1 s</span></label>
+      </fieldset>
+      <button class="btn btn-primary mon-toggle" id="toggle" type="button">Start</button>
+    </section>
+
+    <section class="mon-status" id="status" data-state="idle" aria-live="polite">
+      <div class="mon-state">
+        <i class="state-dot" aria-hidden="true"></i>
+        <div>
+          <div class="state-label" id="state-label">Idle</div>
+          <div class="state-detail" id="state-detail">Press Start to begin</div>
+        </div>
+      </div>
+      <dl class="mon-now">
+        <div><dt>Last ping</dt><dd id="now-ping">—</dd></div>
+        <div><dt>Running</dt><dd id="elapsed">—</dd></div>
+        <div><dt>Pings sent</dt><dd id="sent">—</dd></div>
+      </dl>
+    </section>
+
+    <section class="metrics" aria-label="Statistics">
+      <article class="metric" id="c-ping">
+        <h2><i class="dot dot-ping"></i>Ping</h2>
+        <p><span class="value" data-value>—</span><span class="unit">ms median</span></p>
+        <dl class="stats">
+          <div><dt>Min</dt><dd data-stat="min">—</dd></div>
+          <div><dt>Max</dt><dd data-stat="max">—</dd></div>
+          <div><dt>Avg</dt><dd data-stat="avg">—</dd></div>
+          <div><dt>P95</dt><dd data-stat="p95">—</dd></div>
+          <div><dt>P99</dt><dd data-stat="p99">—</dd></div>
+        </dl>
+      </article>
+      <article class="metric" id="c-jitter">
+        <h2><i class="dot dot-jitter"></i>Jitter</h2>
+        <p><span class="value" data-value>—</span><span class="unit">ms, last 10 s</span></p>
+        <dl class="stats">
+          <div><dt>Min</dt><dd data-stat="min">—</dd></div>
+          <div><dt>Max</dt><dd data-stat="max">—</dd></div>
+          <div><dt>Avg</dt><dd data-stat="avg">—</dd></div>
+          <div title="Largest change between two consecutive pings"><dt>Max jump</dt><dd data-stat="jump">—</dd></div>
+        </dl>
+      </article>
+      <article class="metric" id="c-loss">
+        <h2><i class="dot dot-loss"></i>Packet loss</h2>
+        <p><span class="value" data-value>—</span><span class="unit">%</span></p>
+        <dl class="stats">
+          <div><dt>Lost</dt><dd data-stat="lost">—</dd></div>
+          <div><dt>Spikes</dt><dd data-stat="spikes">—</dd></div>
+          <div><dt>Last loss</dt><dd data-stat="last">—</dd></div>
+        </dl>
+      </article>
+      <article class="metric" id="c-drops">
+        <h2><i class="dot dot-drop"></i>Drops</h2>
+        <p><span class="value" data-value>—</span><span class="unit">disconnects</span></p>
+        <dl class="stats">
+          <div><dt>Downtime</dt><dd data-stat="downtime">—</dd></div>
+          <div><dt>Longest</dt><dd data-stat="longest">—</dd></div>
+          <div><dt>Uptime</dt><dd data-stat="uptime">—</dd></div>
+        </dl>
+      </article>
+    </section>
+
+    <section class="card mon-chart" aria-label="Timeline">
+      <header class="card-head">
+        <h2>Timeline</h2>
+        <fieldset class="segmented segmented-sm" id="window">
+          <legend>Time window</legend>
+          <label><input type="radio" name="window" value="60"><span>1 min</span></label>
+          <label><input type="radio" name="window" value="600" checked><span>10 min</span></label>
+          <label><input type="radio" name="window" value="3600"><span>1 h</span></label>
+          <label><input type="radio" name="window" value="0"><span>All</span></label>
+        </fieldset>
+      </header>
+      <div class="chart-title">Ping, ms</div>
+      <canvas class="chart" id="chart-ping" role="img" aria-label="Ping over time"></canvas>
+      <div class="chart-title">Jitter, ms</div>
+      <canvas class="chart chart-sm" id="chart-jitter" role="img" aria-label="Jitter over time"></canvas>
+      <ul class="legend">
+        <li><i class="dot dot-ping"></i>Ping (line: average, shade: worst)</li>
+        <li><i class="dot dot-jitter"></i>Jitter</li>
+        <li><i class="dot dot-spike"></i>Spike</li>
+        <li><i class="dot dot-loss"></i>Lost ping / drop</li>
+        <li><i class="dot dot-pause"></i>Paused (sleep)</li>
+      </ul>
+    </section>
+
+    <section class="card mon-events" aria-label="Events">
+      <header class="card-head">
+        <h2>Events</h2>
+        <button class="link" id="export" type="button" disabled>Export CSV</button>
+      </header>
+      <ol class="events" id="events"></ol>
+      <p class="events-empty" id="events-empty">Nothing happened yet. Drops, lost pings and spikes will show up here.</p>
+    </section>
+
+    <details class="card mon-help">
+      <summary>How it's measured</summary>
+      <ul>
+        <li><b>Ping</b> is the time from sending a tiny HTTP request to this server to the first byte of the reply.
+          Min, max, average and percentiles cover the whole session.</li>
+        <li><b>Jitter</b> is the mean absolute difference between consecutive pings over the last 10 seconds.
+          Min and max are the calmest and the worst 10 seconds of the session; max jump is the largest single change.</li>
+        <li><b>Lost</b>: no reply within 2 seconds, or a network error. Pings travel over TCP, which resends lost
+          packets, so small packet loss mostly shows up as <b>spikes</b> rather than lost pings.</li>
+        <li><b>Spike</b>: a reply more than twice the median and at least 50 ms above it.</li>
+        <li><b>Drop</b>: two or more lost pings in a row. Downtime is the total length of drops,
+          uptime is the share of the monitored time without them.</li>
+        <li>The probe runs in a background worker, so it keeps its pace while the tab is hidden. If the computer
+          sleeps, that time is marked as paused and not counted. Browsers with a memory or energy saver may unload
+          idle tabs after a while: add this site to its exceptions for very long sessions.</li>
+      </ul>
+    </details>
+
+    <footer class="footer">
+      <span>Self-hosted · no trackers · no third-party requests</span>
+    </footer>
+  </main>
+
+  <script src="monitor.js" type="module"></script>
+</body>
+</html>
