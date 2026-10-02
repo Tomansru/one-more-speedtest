@@ -1,0 +1,492 @@
+:root {
+  --bg: #0b0e14;
+  --bg-glow: rgba(56, 189, 248, 0.10);
+  --surface: #131823;
+  --surface-2: #1a2130;
+  --border: rgba(255, 255, 255, 0.08);
+  --text: #e8edf5;
+  --muted: #8b95a7;
+  --track: rgba(255, 255, 255, 0.07);
+  --download-a: #22d3ee;
+  --download-b: #38bdf8;
+  --upload-a: #a78bfa;
+  --upload-b: #e879f9;
+  --accent: #38bdf8;
+  --danger: #f87171;
+  --shadow: 0 20px 60px rgba(0, 0, 0, 0.45);
+  --radius: 18px;
+  --font: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #f4f6fb;
+    --bg-glow: rgba(56, 189, 248, 0.18);
+    --surface: #ffffff;
+    --surface-2: #eef1f7;
+    --border: rgba(15, 23, 42, 0.08);
+    --text: #0f172a;
+    --muted: #5b6577;
+    --track: rgba(15, 23, 42, 0.07);
+    --download-a: #0891b2;
+    --download-b: #0284c7;
+    --upload-a: #7c3aed;
+    --upload-b: #c026d3;
+    --accent: #0284c7;
+    --shadow: 0 20px 60px rgba(15, 23, 42, 0.15);
+  }
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html { -webkit-text-size-adjust: 100%; }
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  font-family: var(--font);
+  color: var(--text);
+  background:
+    radial-gradient(900px 500px at 50% -10%, var(--bg-glow), transparent 70%),
+    var(--bg);
+  -webkit-font-smoothing: antialiased;
+}
+
+button { font: inherit; color: inherit; }
+
+.app {
+  max-width: 920px;
+  margin: 0 auto;
+  padding: 24px 16px 32px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+/* ---------- Top bar ---------- */
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 1.1rem;
+  letter-spacing: 0.01em;
+}
+.brand strong { font-weight: 700; }
+.brand-mark { width: 28px; height: 28px; color: var(--accent); }
+
+.client {
+  font-size: 0.85rem;
+  color: var(--muted);
+  font-family: var(--mono);
+}
+
+/* ---------- Mode controls ---------- */
+
+.controls {
+  display: flex;
+  justify-content: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.segmented {
+  display: inline-flex;
+  margin: 0;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  gap: 2px;
+}
+.segmented legend {
+  position: absolute;
+  width: 1px; height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+}
+.segmented label { position: relative; cursor: pointer; }
+.segmented input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  margin: 0;
+  cursor: inherit;
+}
+.segmented span {
+  display: block;
+  padding: 8px 18px;
+  border-radius: 999px;
+  font-size: 0.9rem;
+  color: var(--muted);
+  transition: background-color 0.2s, color 0.2s;
+  white-space: nowrap;
+}
+.segmented input:checked + span {
+  background: var(--surface-2);
+  color: var(--text);
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+.segmented input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 2px; }
+.segmented:disabled { opacity: 0.55; }
+.segmented:disabled label { cursor: not-allowed; }
+
+.mode-hint {
+  margin: -8px 0 0;
+  text-align: center;
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+
+/* ---------- Gauge ---------- */
+
+.stage {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+}
+
+.gauge {
+  position: relative;
+  width: min(360px, 86vw);
+  aspect-ratio: 300 / 256; /* matches the cropped SVG viewBox */
+}
+.gauge svg { width: 100%; height: 100%; overflow: visible; }
+
+.gauge-track,
+.gauge-fill {
+  fill: none;
+  stroke-width: 18;
+  stroke-linecap: round;
+}
+.gauge-track { stroke: var(--track); }
+.gauge-fill {
+  stroke: url(#grad-download);
+  filter: drop-shadow(0 0 10px color-mix(in srgb, var(--download-b) 45%, transparent));
+}
+.gauge[data-phase="upload"] .gauge-fill {
+  stroke: url(#grad-upload);
+  filter: drop-shadow(0 0 10px color-mix(in srgb, var(--upload-b) 45%, transparent));
+}
+.s-download-a { stop-color: var(--download-a); }
+.s-download-b { stop-color: var(--download-b); }
+.s-upload-a { stop-color: var(--upload-a); }
+.s-upload-b { stop-color: var(--upload-b); }
+
+.gauge-tick {
+  fill: var(--muted);
+  font-size: 11px;
+  font-family: var(--font);
+  text-anchor: middle;
+  dominant-baseline: middle;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Square box centred on the dial, overflowing the cropped gauge; clicks pass through it. */
+.gauge-center {
+  position: absolute;
+  inset: 0 0 auto;
+  aspect-ratio: 1;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+}
+.gauge-center > * { pointer-events: auto; }
+
+.start {
+  width: 46%;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  border: 2px solid color-mix(in srgb, var(--accent) 70%, transparent);
+  background:
+    radial-gradient(circle at 50% 35%, color-mix(in srgb, var(--accent) 22%, transparent), transparent 70%),
+    var(--surface);
+  font-size: clamp(1.6rem, 6vw, 2.2rem);
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  cursor: pointer;
+  box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 40%, transparent);
+  animation: pulse 2.4s ease-out infinite;
+  transition: transform 0.15s;
+}
+.start:hover { transform: scale(1.04); }
+.start:active { transform: scale(0.98); }
+.start:focus-visible { outline: 3px solid var(--accent); outline-offset: 4px; }
+
+@keyframes pulse {
+  0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 40%, transparent); }
+  80%, 100% { box-shadow: 0 0 0 26px transparent; }
+}
+
+.readout {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  text-align: center;
+}
+.readout[hidden] { display: none; }
+.readout-phase {
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: var(--muted);
+}
+.readout-value {
+  font-size: clamp(2.6rem, 11vw, 3.6rem);
+  font-weight: 700;
+  line-height: 1.05;
+  font-variant-numeric: tabular-nums;
+}
+.readout-unit { color: var(--muted); font-size: 0.95rem; }
+.readout-latency {
+  min-height: 1.3em;
+  margin-top: 4px;
+  font-size: 0.8rem;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.progress {
+  width: min(320px, 80vw);
+  height: 4px;
+  border-radius: 4px;
+  background: var(--track);
+  overflow: hidden;
+}
+.progress-bar {
+  height: 100%;
+  width: 0;
+  background: linear-gradient(90deg, var(--download-a), var(--download-b));
+  transition: width 0.15s linear;
+}
+.gauge[data-phase="upload"] ~ .progress .progress-bar {
+  background: linear-gradient(90deg, var(--upload-a), var(--upload-b));
+}
+
+.status-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 1.5em;
+}
+.status { margin: 0; color: var(--muted); font-size: 0.95rem; }
+
+.link {
+  background: none;
+  border: 0;
+  padding: 0;
+  color: var(--accent);
+  cursor: pointer;
+  font-size: 0.9rem;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+/* ---------- Metric cards ---------- */
+
+.metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.metric {
+  position: relative;
+  padding: 14px 16px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  min-height: 108px;
+  container-type: inline-size;
+}
+.metric h2 {
+  margin: 0 0 6px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--muted);
+}
+.metric p { margin: 0; display: flex; align-items: baseline; gap: 6px; position: relative; z-index: 1; }
+.metric .value {
+  font-size: 1.9rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.metric .unit { color: var(--muted); font-size: 0.85rem; }
+.metric.is-active { border-color: color-mix(in srgb, var(--accent) 55%, transparent); }
+
+/* Ping / jitter measured during download and upload. Stacked so the layout
+   doesn't jump when "—" is replaced by a value; side by side only in cards
+   wide enough to fit both values (very large screens). */
+.loaded {
+  margin: 10px 0 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 2px 14px;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+.loaded .loaded-caption {
+  grid-column: 1 / -1;
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+}
+@container (min-width: 250px) {
+  .loaded { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+.loaded div { display: flex; align-items: center; gap: 6px; }
+.loaded dt::before {
+  content: "";
+  display: inline-block;
+  width: 6px; height: 6px;
+  margin-right: 6px;
+  border-radius: 50%;
+  vertical-align: middle;
+}
+.loaded-download dt::before { background: var(--download-b); }
+.loaded-upload dt::before { background: var(--upload-b); }
+.loaded dd {
+  margin: 0;
+  color: var(--text);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.dot { width: 8px; height: 8px; border-radius: 50%; }
+.metric-download .dot { background: var(--download-b); }
+.metric-upload .dot { background: var(--upload-b); }
+.metric-download.is-active { border-color: color-mix(in srgb, var(--download-b) 55%, transparent); }
+.metric-upload.is-active { border-color: color-mix(in srgb, var(--upload-b) 55%, transparent); }
+
+.spark {
+  position: absolute;
+  left: 0; right: 0; bottom: 0;
+  width: 100%;
+  height: 44px;
+  pointer-events: none;
+}
+
+.footer {
+  text-align: center;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+/* ---------- Results dialog ---------- */
+
+.results {
+  width: min(680px, calc(100vw - 32px));
+  padding: 24px;
+  border: 1px solid var(--border);
+  border-radius: 22px;
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: var(--shadow);
+}
+.results::backdrop {
+  background: rgba(5, 8, 14, 0.62);
+  backdrop-filter: blur(4px);
+}
+.results[open] { animation: pop 0.22s ease-out; }
+@keyframes pop {
+  from { opacity: 0; transform: translateY(10px) scale(0.98); }
+  to { opacity: 1; transform: none; }
+}
+.results h2 { margin: 0 0 16px; font-size: 1.2rem; }
+.results-close { position: absolute; top: 12px; right: 12px; margin: 0; }
+.results-close button {
+  width: 34px; height: 34px;
+  border-radius: 50%;
+  border: 0;
+  background: var(--surface-2);
+  font-size: 1.3rem;
+  line-height: 1;
+  cursor: pointer;
+}
+.results-image {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: 14px;
+  border: 1px solid var(--border);
+  aspect-ratio: 1200 / 600;
+  background: var(--surface-2);
+}
+.results-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 18px;
+}
+.results-note { margin: 10px 0 0; min-height: 1.2em; font-size: 0.85rem; color: var(--muted); }
+
+.btn {
+  flex: 1 1 auto;
+  padding: 11px 18px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  font-weight: 600;
+  cursor: pointer;
+  transition: filter 0.15s, transform 0.1s;
+}
+.btn:hover { filter: brightness(1.1); }
+.btn:active { transform: translateY(1px); }
+.btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.btn-primary {
+  border-color: transparent;
+  color: #fff;
+  background: linear-gradient(135deg, var(--download-a), var(--upload-a));
+}
+.btn-ghost { background: transparent; }
+
+/* ---------- Toast ---------- */
+
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: 24px;
+  transform: translateX(-50%);
+  max-width: calc(100vw - 32px);
+  padding: 10px 16px;
+  border-radius: 12px;
+  background: var(--surface-2);
+  border: 1px solid color-mix(in srgb, var(--danger) 50%, transparent);
+  box-shadow: var(--shadow);
+  font-size: 0.9rem;
+}
+
+/* ---------- Responsive ---------- */
+
+@media (min-width: 1800px) {
+  .app { max-width: 1240px; }
+}
+
+@media (max-width: 720px) {
+  .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .metric .value { font-size: 1.6rem; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .start { animation: none; }
+  .results[open] { animation: none; }
+  .progress-bar { transition: none; }
+}
