@@ -664,11 +664,20 @@ a.brand { color: inherit; text-decoration: none; }
 .event-drop .event-title::before, .event-loss .event-title::before, .event-offline .event-title::before { background: var(--danger); }
 .event-spike .event-title::before { background: var(--warn); }
 .event-start .event-title::before, .event-online .event-title::before { background: var(--ok); }
+.event-udp-unavailable .event-title::before, .event-udp-reconnect .event-title::before { background: var(--warn); }
 .event-drop.is-ongoing .event-title { color: var(--danger); }
 .event-detail { color: var(--muted); overflow-wrap: anywhere; }
 .events-empty { margin: 4px 0 0; color: var(--muted); font-size: 0.85rem; }
 .events-empty[hidden] { display: none; }
 .link:disabled { color: var(--muted); cursor: default; text-decoration: none; }
+
+.compare-note { margin: 0 0 10px; font-size: 0.82rem; color: var(--muted); line-height: 1.5; }
+.stats-row {
+  margin: 0;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 6px 24px;
+  font-size: 0.85rem;
+}
 
 .mon-help summary {
   cursor: pointer;

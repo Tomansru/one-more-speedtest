@@ -48,6 +48,7 @@
         </div>
       </div>
       <dl class="mon-now">
+        <div><dt>Probe</dt><dd id="transport">—</dd></div>
         <div><dt>Last ping</dt><dd id="now-ping">—</dd></div>
         <div><dt>Running</dt><dd id="elapsed">—</dd></div>
         <div><dt>Pings sent</dt><dd id="sent">—</dd></div>
@@ -96,6 +97,23 @@
       </article>
     </section>
 
+    <section class="card mon-compare" id="compare" aria-label="Same ping over TCP" hidden>
+      <header class="card-head">
+        <h2>Same ping over TCP</h2>
+      </header>
+      <p class="compare-note">Games use UDP, and so do the numbers above. TCP resends lost packets,
+        so on TCP the same trouble shows up as spikes rather than loss.</p>
+      <dl class="stats stats-row">
+        <div><dt>Median</dt><dd data-tcp="median">—</dd></div>
+        <div><dt>P95</dt><dd data-tcp="p95">—</dd></div>
+        <div><dt>Max</dt><dd data-tcp="max">—</dd></div>
+        <div><dt>Jitter avg</dt><dd data-tcp="jitter">—</dd></div>
+        <div><dt>Spikes</dt><dd data-tcp="spikes">—</dd></div>
+        <div><dt>Lost</dt><dd data-tcp="lost">—</dd></div>
+        <div><dt>Drops</dt><dd data-tcp="drops">—</dd></div>
+      </dl>
+    </section>
+
     <section class="card mon-chart" aria-label="Timeline">
       <header class="card-head">
         <h2>Timeline</h2>
@@ -132,18 +150,22 @@
     <details class="card mon-help">
       <summary>How it's measured</summary>
       <ul>
-        <li><b>Ping</b> is the time from sending a tiny HTTP request to this server to the first byte of the reply.
+        <li><b>Ping</b> goes over <b>UDP</b>, like game traffic: a 4-byte probe through a WebRTC data channel
+          to this server with retransmissions turned off, so a lost packet stays lost. Ping is its round trip.
           Min, max, average and percentiles cover the whole session.</li>
+        <li>The same probe also runs as an HTTP request over <b>TCP</b> for comparison. If UDP can't reach the
+          server (a firewall, or the server isn't reachable over UDP), TCP is used alone; the status card shows
+          which probe the numbers come from.</li>
         <li><b>Jitter</b> is the mean absolute difference between consecutive pings over the last 10 seconds.
           Min and max are the calmest and the worst 10 seconds of the session; max jump is the largest single change.</li>
-        <li><b>Lost</b>: no reply within 2 seconds, or a network error. Pings travel over TCP, which resends lost
-          packets, so small packet loss mostly shows up as <b>spikes</b> rather than lost pings.</li>
+        <li><b>Lost</b>: no reply within 2 seconds. Over UDP this is real packet loss. TCP resends lost packets,
+          so there small loss mostly shows up as <b>spikes</b> instead.</li>
         <li><b>Spike</b>: a reply more than twice the median and at least 50 ms above it.</li>
-        <li><b>Drop</b>: two or more lost pings in a row. Downtime is the total length of drops,
+        <li><b>Drop</b>: lost pings in a row (at least two) covering at least a second. Downtime is the total length of drops,
           uptime is the share of the monitored time without them.</li>
-        <li>The probe runs in a background worker, so it keeps its pace while the tab is hidden. If the computer
-          sleeps, that time is marked as paused and not counted. Browsers with a memory or energy saver may unload
-          idle tabs after a while: add this site to its exceptions for very long sessions.</li>
+        <li>The probes' clock runs in a background worker, so they keep their pace while the tab is hidden. If the
+          computer sleeps, that time is marked as paused and not counted. Browsers with a memory or energy saver
+          may unload idle tabs after a while: add this site to its exceptions for very long sessions.</li>
       </ul>
     </details>
 

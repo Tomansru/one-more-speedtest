@@ -30,6 +30,8 @@ const (
 type serverConfig struct {
 	// TrustProxy makes the server report the client IP from proxy headers.
 	TrustProxy bool
+	// RTC serves the UDP probe of the stability monitor; nil disables it.
+	RTC *rtcServer
 }
 
 type server struct {
@@ -56,6 +58,9 @@ func newServer(cfg serverConfig) (http.Handler, error) {
 	mux.HandleFunc("GET /api/download", s.handleDownload)
 	mux.HandleFunc("POST /api/upload", s.handleUpload)
 	mux.HandleFunc("GET /api/info", s.handleInfo)
+	if cfg.RTC != nil {
+		mux.HandleFunc("POST /api/rtc", cfg.RTC.handleRTC)
+	}
 	mux.HandleFunc("GET /monitor", func(w http.ResponseWriter, r *http.Request) {
 		http.ServeFileFS(w, r, static, "monitor.html")
 	})

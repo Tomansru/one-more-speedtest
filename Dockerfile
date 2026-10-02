@@ -3,7 +3,8 @@
 FROM --platform=$BUILDPLATFORM golang:1.27-alpine AS build
 ARG TARGETOS TARGETARCH
 WORKDIR /src
-COPY go.mod ./
+COPY go.mod go.sum ./
+RUN go mod download
 COPY *.go ./
 COPY web ./web
 RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
@@ -12,5 +13,6 @@ RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
 FROM scratch
 COPY --from=build /speedtest /speedtest
 USER 65534:65534
-EXPOSE 8080
+# TCP for the UI and API, UDP for the stability monitor's WebRTC probe.
+EXPOSE 8080/tcp 8080/udp
 ENTRYPOINT ["/speedtest"]
