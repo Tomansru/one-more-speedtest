@@ -332,12 +332,19 @@ function niceCeil(v) {
   return 10 * p;
 }
 
-// Aggregates the samples of [from, to) into n equal time buckets.
-function bucketize(s, from, to, n) {
-  const width = (to - from) / n;
+// Bucket widths, ms. Buckets sit on multiples of the width in absolute time,
+// so a ping always shares its bucket with the same neighbours: between renders
+// the chart only scrolls instead of averaging the samples differently.
+const BUCKET_STEPS = [250, 500, 1000, 2000, 5000, 10_000, 15_000, 30_000, 60_000, 120_000, 300_000, 600_000, 1_800_000, 3_600_000];
+
+// Aggregates the samples of [from, to) into time-aligned buckets of `width` ms;
+// the first bucket starts at or before `from`.
+function bucketize(s, from, to, width) {
+  const first = Math.floor(from / width) * width;
+  const n = Math.max(1, Math.ceil((to - first) / width));
   const b = Array.from({ length: n }, () => ({ count: 0, sum: 0, max: 0, lost: 0, jsum: 0, jn: 0, spike: false }));
-  for (let i = lowerBound(s.t, from); i < s.t.length && s.t[i] < to; i++) {
-    const k = b[Math.min(n - 1, Math.floor((s.t[i] - from) / width))];
+  for (let i = lowerBound(s.t, first); i < s.t.length && s.t[i] < to; i++) {
+    const k = b[Math.min(n - 1, Math.floor((s.t[i] - first) / width))];
     const rtt = s.rtt[i];
     if (Number.isNaN(rtt)) {
       k.lost++;
@@ -352,7 +359,15 @@ function bucketize(s, from, to, n) {
       k.jn++;
     }
   }
-  return { buckets: b, width };
+  return { buckets: b, first };
+}
+
+// Keeps the series inside the plot; the first bucket may start left of it.
+function clipPlot(ctx, plot) {
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(plot.x, plot.y, plot.w, plot.h);
+  ctx.clip();
 }
 
 function setupCanvas(canvas) {
@@ -487,9 +502,10 @@ function renderCharts(s, now) {
   const jp = plotOf(jit, true);
   if (pp.w < 20 || pp.h < 10) return;
 
-  const n = Math.max(10, Math.floor(pp.w / 3));
-  const { buckets, width } = bucketize(s, from, to, n);
-  const bx = (i) => pp.x + ((i + 0.5) / n) * pp.w;
+  // The finest step that keeps buckets at least 2 px wide.
+  const width = BUCKET_STEPS.find((w) => (to - from) / w <= pp.w / 2) ?? BUCKET_STEPS.at(-1);
+  const { buckets, first } = bucketize(s, from, to, width);
+  const bx = (i) => pp.x + ((first + (i + 0.5) * width - from) / (to - from)) * pp.w;
   const gap = Math.max(2, Math.ceil((s.interval * 3) / width));
 
   const drops = s.drops.map((d) => [d.start, d.end ?? to]);
@@ -497,7 +513,7 @@ function renderCharts(s, now) {
   // Single lost pings get a mark of their own; drops are already shaded.
   const lostMarks = [];
   buckets.forEach((b, i) => {
-    const t0 = from + i * width;
+    const t0 = first + i * width;
     const t1 = t0 + width;
     if (b.lost && !drops.some(([a, z]) => t0 < z && t1 > a)) lostMarks.push([t0, t1]);
   });
@@ -507,6 +523,7 @@ function renderCharts(s, now) {
   const py = (v) => pp.y + pp.h - (Math.min(v, pingMax) / pingMax) * pp.h;
   drawGrid(ping.ctx, pp, pingMax, colors);
   drawTimeGrid(ping.ctx, pp, from, to, colors, false);
+  clipPlot(ping.ctx, pp);
   drawBands(ping.ctx, pp, from, to, pauses, `${colors.muted}33`);
   drawBands(ping.ctx, pp, from, to, drops, `${colors.loss}55`);
   drawBands(ping.ctx, pp, from, to, lostMarks, `${colors.loss}aa`);
@@ -523,6 +540,7 @@ function renderCharts(s, now) {
     ping.ctx.arc(bx(i), py(b.max), 3, 0, Math.PI * 2);
     ping.ctx.fill();
   });
+  ping.ctx.restore();
 
   // Jitter: average |Δ| between consecutive pings per bucket.
   const jitterOf = (b) => (b.jn ? b.jsum / b.jn : NaN);
@@ -530,6 +548,7 @@ function renderCharts(s, now) {
   const jy = (v) => jp.y + jp.h - (Math.min(v, jitterMax) / jitterMax) * jp.h;
   drawGrid(jit.ctx, jp, jitterMax, colors);
   drawTimeGrid(jit.ctx, jp, from, to, colors, true);
+  clipPlot(jit.ctx, jp);
   drawBands(jit.ctx, jp, from, to, pauses, `${colors.muted}33`);
   drawBands(jit.ctx, jp, from, to, drops, `${colors.loss}55`);
   strokeSegments(jit.ctx, segments(buckets, bx, jitterOf, gap), (p) => jy(p.v), colors.jitter, {
@@ -537,6 +556,7 @@ function renderCharts(s, now) {
     base: jp.y + jp.h,
     color: `${colors.jitter}26`,
   });
+  jit.ctx.restore();
 }
 
 /* ------------------------------------------------------------------ */
