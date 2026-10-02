@@ -43,19 +43,19 @@ you play or work, and come back to see how stable the connection was:
 - A timeline of ping and jitter (1 min, 10 min, 1 h or the whole session),
   an event log and a CSV export of every sample.
 
-### UDP probe
+### UDP or TCP
 
-Games use UDP, so the monitor pings over UDP too: a 4-byte probe goes through a
-WebRTC data channel that is unordered and has retransmissions turned off, and
-the server echoes it back. A lost packet stays lost and is counted as such.
+Games use UDP, so the monitor prefers it. On start it checks whether UDP
+reaches the server: if it does, the whole session pings over UDP, a 4-byte
+probe through a WebRTC data channel that is unordered and has retransmissions
+turned off, echoed by the server. A lost packet stays lost and is counted as
+such. If UDP can't reach the server (a firewall, a reverse proxy,
+`-udp-addr off`), the session pings with HTTP requests over TCP instead, and
+the event log says why. A session never mixes the two; the status card shows
+which one it uses. Over TCP lost packets are resent, so small loss mostly
+shows up as latency spikes rather than lost pings.
 
-The same probe also runs as an HTTP request over TCP, shown next to the UDP
-numbers for comparison. TCP resends lost packets, so there the same trouble
-shows up as latency spikes rather than loss. If UDP can't reach the server (a
-firewall, a reverse proxy, `-udp-addr off`), the monitor falls back to TCP
-alone and says why in its event log.
-
-The probes keep their pace (250 ms, 500 ms or 1 s) while the tab is hidden: the
+The probe keeps its pace (250 ms, 500 ms or 1 s) while the tab is hidden: its
 clock runs in a Web Worker, which browsers don't throttle like background tabs.
 The tab title shows the current status (🟢 / 🟡 / 🔴). Time the computer spends
 asleep is marked as paused and not counted as downtime.

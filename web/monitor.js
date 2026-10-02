@@ -1,9 +1,8 @@
 // One More Speedtest — stability monitor.
 // Pings the server until stopped and keeps session statistics: ping
-// distribution, rolling jitter, lost pings, spikes and drops. The main probe
-// is UDP (a WebRTC data channel without retransmissions); HTTP over TCP (see
-// monitor-worker.js) runs next to it for comparison, or alone as a fallback
-// when UDP can't reach the server.
+// distribution, rolling jitter, lost pings, spikes and drops. A session pings
+// over UDP (a WebRTC data channel without retransmissions) when UDP reaches
+// the server, and over HTTP/TCP (see monitor-worker.js) otherwise.
 
 const TIMEOUT_MS = 2000; // a ping without a reply in this time is lost
 const JITTER_WINDOW_MS = 10_000; // rolling window for the current jitter
@@ -36,7 +35,6 @@ const ui = {
   stateDetail: $("#state-detail"),
   nowPing: $("#now-ping"),
   transport: $("#transport"),
-  compare: $("#compare"),
   elapsed: $("#elapsed"),
   sent: $("#sent"),
   cards: {
@@ -684,14 +682,12 @@ class UdpProbe {
 /* Rendering                                                           */
 /* ------------------------------------------------------------------ */
 
-// {interval, tcp, udp, transport, udpProbe, lastTick}: one statistics session
-// per probe. The UDP one is shown once its channel is open; TCP otherwise.
-let probes = null;
+// The current run: {interval, transport, session, udp, lastTick, stopped}.
+// The session exists once the transport is chosen.
+let run = null;
 let worker = null;
 let renderQueued = false;
 let renderedEvents = { s: null, version: -1 };
-
-const primary = () => probes && (probes.udp ?? probes.tcp);
 
 function setStat(card, name, text) {
   ui.cards[card].querySelector(`[data-stat="${name}"]`).textContent = text;
@@ -801,19 +797,17 @@ function renderEvents(s, now) {
 }
 
 const TRANSPORTS = {
-  connecting: ["UDP…", "Opening a UDP channel to the server"],
-  udp: ["UDP", "WebRTC data channel without retransmissions; HTTP over TCP runs alongside for comparison"],
-  tcp: ["TCP", "UDP could not reach the server, so this is HTTP over TCP"],
+  connecting: ["…", "Checking whether UDP reaches the server"],
+  udp: ["UDP", "WebRTC data channel without retransmissions, like game traffic"],
+  tcp: ["TCP", "HTTP requests over TCP"],
 };
 
 function renderStatus(s, now) {
-  const st = sessionState(s, now);
+  const st = run && !s ? { state: "starting", label: "Starting…", detail: TRANSPORTS.connecting[1] } : sessionState(s, now);
   ui.status.dataset.state = st.state;
   ui.stateLabel.textContent = st.label;
-  // UDP down while TCP still answers: something treats the two differently.
-  const tcpUp = probes?.udp && !s.end && probes.tcp.sent && !probes.tcp.streak;
-  ui.stateDetail.textContent = st.state === "down" && tcpUp ? `${st.detail} · TCP still answers` : st.detail;
-  const [transport, hint] = probes ? TRANSPORTS[probes.transport] : ["—", ""];
+  ui.stateDetail.textContent = st.detail;
+  const [transport, hint] = run ? TRANSPORTS[run.transport] : ["—", ""];
   ui.transport.textContent = transport;
   ui.transport.title = hint;
   ui.nowPing.textContent = !s || !s.sent ? "—" : Number.isNaN(s.last) ? "lost" : `${fmtMs(s.last)} ms`;
@@ -836,31 +830,12 @@ function updateTitle(s, now) {
   else document.title = `🟢 ${s.sent ? ping : "…"} · Monitor`;
 }
 
-// The TCP probe's key numbers, shown next to the UDP ones.
-function renderCompare(now) {
-  const s = probes?.udp && probes.tcp;
-  ui.compare.hidden = !s;
-  if (!s) return;
-  const has = s.received > 0;
-  const values = {
-    median: has ? `${fmtMs(percentile(s, 0.5))} ms` : "—",
-    p95: has ? `${fmtMs(percentile(s, 0.95))} ms` : "—",
-    max: has ? `${fmtMs(s.max)} ms` : "—",
-    jitter: s.jumpCount ? `${fmtMs(s.jumpSum / s.jumpCount)} ms` : "—",
-    spikes: s.spikes.toLocaleString(),
-    lost: s.sent ? `${fmtPct((s.lost / s.sent) * 100)}%` : "—",
-    drops: s.drops.length ? `${s.drops.length} · ${fmtDuration(downtime(s, now).total)}` : "0",
-  };
-  for (const [name, text] of Object.entries(values)) ui.compare.querySelector(`[data-tcp="${name}"]`).textContent = text;
-}
-
 function render() {
   renderQueued = false;
   const now = Date.now();
-  const s = primary();
+  const s = run?.session ?? null;
   renderStatus(s, now);
   renderStats(s, now);
-  renderCompare(now);
   renderEvents(s, now);
   renderCharts(s, now);
 }
@@ -883,87 +858,89 @@ function selectedInterval() {
   return Number(document.querySelector('input[name="interval"]:checked').value);
 }
 
-function start() {
+// Picks the transport once: UDP when a channel opens, TCP otherwise. The
+// whole session then sticks with it, so its numbers mean one thing.
+async function start() {
   const interval = selectedInterval();
-  const tcp = newSession(interval);
-  addEvent(tcp, { kind: "start", t: tcp.start, interval, probe: "tcp" });
-  const current = { interval, tcp, udp: null, transport: "connecting", udpProbe: null, lastTick: 0 };
-  probes = current;
-
-  current.udpProbe = new UdpProbe((sample) => {
-    addSample(current.udp, sample);
-    sampled();
-  });
-  current.udpProbe
-    .connect()
-    .then((ok) => {
-      if (!ok || current !== probes) return;
-      current.udp = newSession(interval);
-      addEvent(current.udp, { kind: "start", t: current.udp.start, interval, probe: "udp" });
-      current.transport = "udp";
-      current.udpProbe.onReconnect = () => {
-        addEvent(current.udp, { kind: "udp-reconnect", t: Date.now() });
-        queueRender();
-      };
-    })
-    .catch((err) => {
-      if (current !== probes || current.tcp.end) return;
-      current.transport = "tcp";
-      current.udpProbe.close();
-      addEvent(current.tcp, { kind: "udp-unavailable", t: Date.now(), reason: err.message });
-    })
-    .finally(queueRender);
-
-  worker ??= createWorker();
-  worker.postMessage({ type: "start", interval, timeout: TIMEOUT_MS });
-
+  const current = { interval, transport: "connecting", session: null, udp: null, lastTick: 0, stopped: false };
+  run = current;
   ui.toggle.textContent = "Stop";
   ui.toggle.classList.add("is-running");
   ui.interval.disabled = true;
-  ui.exportCsv.disabled = false;
+  ui.exportCsv.disabled = true;
   clock = setInterval(sampled, 1000);
+  sampled();
+
+  current.udp = new UdpProbe((sample) => {
+    addSample(current.session, sample);
+    sampled();
+  });
+  let reason = "";
+  try {
+    await current.udp.connect();
+  } catch (err) {
+    reason = err.message;
+  }
+  if (current.stopped) return;
+
+  current.transport = reason ? "tcp" : "udp";
+  const s = (current.session = newSession(interval));
+  addEvent(s, { kind: "start", t: s.start, interval, probe: current.transport });
+  if (reason) {
+    current.udp.close();
+    current.udp = null;
+    addEvent(s, { kind: "udp-unavailable", t: s.start, reason });
+  } else {
+    current.udp.onReconnect = () => {
+      addEvent(s, { kind: "udp-reconnect", t: Date.now() });
+      queueRender();
+    };
+  }
+
+  worker ??= createWorker();
+  worker.postMessage({ type: "start", transport: current.transport, interval, timeout: TIMEOUT_MS });
+  ui.exportCsv.disabled = false;
   sampled();
 }
 
 function stop() {
+  run.stopped = true;
   worker?.postMessage({ type: "stop" });
   clearInterval(clock);
-  probes.udpProbe.close();
-  if (probes.transport === "connecting") probes.transport = "tcp";
-  finishSession(probes.tcp);
-  if (probes.udp) finishSession(probes.udp);
+  run.udp?.close();
+  if (run.session) finishSession(run.session);
+  else run = null; // stopped while choosing the transport
   ui.toggle.textContent = "Start";
   ui.toggle.classList.remove("is-running");
   ui.interval.disabled = false;
-  updateTitle(primary(), Date.now());
-  queueRender();
+  sampled();
 }
 
-const running = () => probes && !probes.tcp.end;
+const running = () => run && !run.stopped;
 
 function sampled() {
-  updateTitle(primary(), Date.now());
+  updateTitle(run?.session, Date.now());
   queueRender();
 }
 
 // Worker clock tick: drives the UDP probe, which lives on the page.
 function tick(t) {
-  const p = probes;
-  if (p.lastTick && t - p.lastTick > p.interval + PAUSE_MS && p.udp) {
-    p.udpProbe.discard();
-    addPause(p.udp, { from: p.lastTick, to: t });
+  const r = run;
+  if (r.lastTick && t - r.lastTick > r.interval + PAUSE_MS) {
+    r.udp.discard();
+    addPause(r.session, { from: r.lastTick, to: t });
   }
-  p.lastTick = t;
-  if (p.udp) p.udpProbe.tick(t);
+  r.lastTick = t;
+  r.udp.tick(t);
 }
 
 function createWorker() {
   const w = new Worker("monitor-worker.js");
   w.onmessage = ({ data }) => {
-    if (!running()) return;
-    if (data.type === "tick") return tick(data.t);
-    if (data.type === "sample") addSample(probes.tcp, data);
-    else if (data.type === "pause") addPause(probes.tcp, data);
+    if (!running() || !run.session) return;
+    if (data.type === "tick") return run.udp && tick(data.t);
+    if (data.type === "sample") addSample(run.session, data);
+    else if (data.type === "pause") addPause(run.session, data);
     sampled();
   };
   w.onerror = (err) => {
@@ -975,23 +952,19 @@ function createWorker() {
 }
 
 function exportCsv() {
-  if (!probes) return;
-  const rows = [];
-  for (const [probe, s] of [["udp", probes.udp], ["tcp", probes.tcp]]) {
-    if (!s) continue;
-    for (let i = 0; i < s.t.length; i++) {
-      const rtt = s.rtt[i];
-      const status = Number.isNaN(rtt) ? "lost" : s.flags[i] & FLAG_SPIKE ? "spike" : "ok";
-      rows.push([s.t[i], `${new Date(s.t[i]).toISOString()},${probe},${Number.isNaN(rtt) ? "" : rtt.toFixed(2)},${status}`]);
-    }
+  const s = run?.session;
+  if (!s) return;
+  const rows = ["time,ping_ms,status"];
+  for (let i = 0; i < s.t.length; i++) {
+    const rtt = s.rtt[i];
+    const status = Number.isNaN(rtt) ? "lost" : s.flags[i] & FLAG_SPIKE ? "spike" : "ok";
+    rows.push(`${new Date(s.t[i]).toISOString()},${Number.isNaN(rtt) ? "" : rtt.toFixed(2)},${status}`);
   }
-  rows.sort((a, b) => a[0] - b[0]);
-  const csv = ["time,probe,ping_ms,status", ...rows.map((r) => r[1])].join("\n");
-  const blob = new Blob([`${csv}\n`], { type: "text/csv" });
-  const d = new Date(probes.tcp.start);
+  const blob = new Blob([`${rows.join("\n")}\n`], { type: "text/csv" });
+  const d = new Date(s.start);
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
-  a.download = `stability-${d.getFullYear()}${pad2(d.getMonth() + 1)}${pad2(d.getDate())}-${pad2(d.getHours())}${pad2(d.getMinutes())}.csv`;
+  a.download = `stability-${run.transport}-${d.getFullYear()}${pad2(d.getMonth() + 1)}${pad2(d.getDate())}-${pad2(d.getHours())}${pad2(d.getMinutes())}.csv`;
   document.body.append(a);
   a.click();
   a.remove();
@@ -1006,14 +979,14 @@ matchMedia("(prefers-color-scheme: light)").addEventListener("change", queueRend
 
 for (const kind of ["offline", "online"]) {
   window.addEventListener(kind, () => {
-    if (!running()) return;
-    for (const s of [probes.tcp, probes.udp]) if (s) addEvent(s, { kind, t: Date.now() });
+    if (!running() || !run.session) return;
+    addEvent(run.session, { kind, t: Date.now() });
     queueRender();
   });
 }
 
 window.addEventListener("beforeunload", (e) => {
-  if (running() && primary().sent) e.preventDefault();
+  if (running() && run.session?.sent) e.preventDefault();
 });
 
 render();

@@ -1,4 +1,5 @@
-// One More Speedtest — stability monitor probe (HTTP over TCP) and clock.
+// One More Speedtest — stability monitor: the HTTP/TCP probe, or the clock
+// that paces the UDP probe on the page.
 // Runs in a dedicated worker: browsers heavily throttle timers of background
 // tabs (Chrome wakes them once a minute after 5 minutes), but not workers, so
 // the probe keeps its pace while the page sits behind a game or another app.
@@ -79,8 +80,8 @@ async function ticks(id, interval) {
 self.onmessage = ({ data }) => {
   if (data.type === "start") {
     performance.setResourceTimingBufferSize?.(100);
-    loop(++run, data.interval, data.timeout);
-    ticks(run, data.interval);
+    if (data.transport === "udp") ticks(++run, data.interval);
+    else loop(++run, data.interval, data.timeout);
   } else if (data.type === "stop") {
     run++;
   }
