@@ -162,6 +162,67 @@ func TestStaticMonitor(t *testing.T) {
 	}
 }
 
+func TestStaticContentTypes(t *testing.T) {
+	h := newTestServer(t, serverConfig{})
+	tests := []struct{ path, want string }{
+		{"/manifest.webmanifest", "application/manifest+json"},
+		{"/favicon.ico", "image/x-icon"},
+		{"/favicon.svg", "image/svg+xml"},
+		{"/apple-touch-icon.png", "image/png"},
+		{"/theme.js", "text/javascript"},
+		{"/style.css", "text/css"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.path, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, tt.path, nil))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+			}
+			if got, _, _ := strings.Cut(rec.Header().Get("Content-Type"), ";"); got != tt.want {
+				t.Errorf("Content-Type = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestManifestIcons(t *testing.T) {
+	h := newTestServer(t, serverConfig{})
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/manifest.webmanifest", nil))
+	var manifest struct {
+		StartURL string `json:"start_url"`
+		Icons    []struct {
+			Src string `json:"src"`
+		} `json:"icons"`
+		Shortcuts []struct {
+			URL string `json:"url"`
+		} `json:"shortcuts"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &manifest); err != nil {
+		t.Fatalf("manifest is not valid JSON: %v", err)
+	}
+	if len(manifest.Icons) == 0 {
+		t.Fatal("manifest has no icons")
+	}
+
+	// Every URL in the manifest is relative to it, i.e. to the site root.
+	paths := []string{manifest.StartURL}
+	for _, icon := range manifest.Icons {
+		paths = append(paths, icon.Src)
+	}
+	for _, s := range manifest.Shortcuts {
+		paths = append(paths, s.URL)
+	}
+	for _, p := range paths {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/"+strings.TrimPrefix(p, "./"), nil))
+		if rec.Code != http.StatusOK {
+			t.Errorf("GET %q from the manifest: status = %d, want %d", p, rec.Code, http.StatusOK)
+		}
+	}
+}
+
 type zeroReader struct{}
 
 func (zeroReader) Read(p []byte) (int, error) {

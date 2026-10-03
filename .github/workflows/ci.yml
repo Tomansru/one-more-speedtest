@@ -37,3 +37,8 @@ jobs:
 
       - name: Check JavaScript syntax
         run: for f in web/*.js; do node --check "$f"; done
+
+      - name: Type-check JavaScript
+        run: |
+          npx --yes -p typescript@6 tsc -p tsconfig.json
+          npx --yes -p typescript@6 tsc -p tsconfig.worker.json

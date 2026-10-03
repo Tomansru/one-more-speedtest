@@ -1,0 +1,44 @@
+# One More Speedtest behind Traefik.
+#
+#   cp .env.example .env    # then set SPEEDTEST_HOST and, for the UDP probe, SPEEDTEST_PUBLIC_IP
+#   docker compose up -d --build
+#
+# Expects a running Traefik with the Docker provider, attached to an external
+# network (TRAEFIK_NETWORK) and with an HTTPS entrypoint and a certificate
+# resolver (TRAEFIK_ENTRYPOINT, TRAEFIK_CERTRESOLVER). HTTPS also lets browsers
+# install the page as an app, copy result images and keep the screen awake.
+
+services:
+  speedtest:
+    # Built from the latest source on GitHub. To use the published image
+    # instead, comment out `build` and uncomment `image`.
+    build:
+      context: https://github.com/Tomansru/one-more-speedtest.git#${SPEEDTEST_REF:-main}
+    # image: ghcr.io/tomansru/one-more-speedtest:latest
+    restart: unless-stopped
+    environment:
+      # Traefik passes the client address in X-Forwarded-For.
+      SPEEDTEST_TRUST_PROXY: "1"
+      # The monitor's UDP probe bypasses Traefik: browsers send UDP straight
+      # to this address and port, so they must be reachable from outside.
+      SPEEDTEST_UDP_ADDR: ":${SPEEDTEST_UDP_PORT:-8080}"
+      SPEEDTEST_PUBLIC_IP: ${SPEEDTEST_PUBLIC_IP:-}
+    ports:
+      # Same port number on both sides: the server advertises it to browsers.
+      - "${SPEEDTEST_UDP_PORT:-8080}:${SPEEDTEST_UDP_PORT:-8080}/udp"
+    networks:
+      - traefik
+    labels:
+      traefik.enable: "true"
+      traefik.docker.network: ${TRAEFIK_NETWORK:-traefik}
+      traefik.http.routers.speedtest.rule: Host(`${SPEEDTEST_HOST:?set SPEEDTEST_HOST to the domain of the speed test}`)
+      traefik.http.routers.speedtest.entrypoints: ${TRAEFIK_ENTRYPOINT:-websecure}
+      traefik.http.routers.speedtest.tls.certresolver: ${TRAEFIK_CERTRESOLVER:-letsencrypt}
+      traefik.http.services.speedtest.loadbalancer.server.port: "8080"
+      # Don't add compression or buffering middlewares to this router: they
+      # distort the download and upload measurements.
+
+networks:
+  traefik:
+    name: ${TRAEFIK_NETWORK:-traefik}
+    external: true

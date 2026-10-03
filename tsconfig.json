@@ -1,0 +1,17 @@
+{
+  // Type-checks the UI scripts against their JSDoc annotations. Nothing is
+  // compiled: the scripts are served as they are.
+  "compilerOptions": {
+    "target": "es2023",
+    "lib": ["es2023", "dom", "dom.iterable"],
+    "moduleDetection": "force",
+    "allowJs": true,
+    "checkJs": true,
+    "noEmit": true,
+    "strict": true,
+    "skipLibCheck": true
+  },
+  "include": ["web/*.js"],
+  // Runs in a worker: see tsconfig.worker.json.
+  "exclude": ["web/monitor-worker.js"]
+}
