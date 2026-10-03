@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"io/fs"
+	"mime"
 	"net"
 	"net/http"
 	"strconv"
@@ -15,6 +16,22 @@ import (
 
 //go:embed web
 var webFS embed.FS
+
+// staticTypes are media types of UI files that Go's built-in table lacks. The
+// system tables that could provide them are missing from the scratch image,
+// and with nosniff a guessed type is not good enough.
+var staticTypes = map[string]string{
+	".ico":         "image/x-icon",
+	".webmanifest": "application/manifest+json",
+}
+
+func init() {
+	for ext, typ := range staticTypes {
+		if err := mime.AddExtensionType(ext, typ); err != nil {
+			panic(err)
+		}
+	}
+}
 
 const (
 	// payloadSize is the size of the random block repeated in download responses.

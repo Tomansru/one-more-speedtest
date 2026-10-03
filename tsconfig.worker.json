@@ -1,0 +1,8 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "lib": ["es2023", "webworker"]
+  },
+  "include": ["web/monitor-worker.js"],
+  "exclude": []
+}

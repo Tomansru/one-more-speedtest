@@ -21,6 +21,10 @@ It measures:
 At the end a results card is shown that can be **downloaded as a PNG** or
 **copied to the clipboard** as an image.
 
+Clicking the IP address in the top bar copies it to the clipboard. The theme
+follows the system by default; the small switch in the footer picks light or
+dark instead, and the browser remembers the choice.
+
 <p align="center">
   <a href="docs/screenshots/test-dark.png"><img src="docs/screenshots/test-dark.png" alt="Dark theme: test in progress" width="48%"></a>
   <a href="docs/screenshots/finished-light.png"><img src="docs/screenshots/finished-light.png" alt="Light theme: finished test" width="48%"></a>
@@ -58,7 +62,16 @@ shows up as latency spikes rather than lost pings.
 The probe keeps its pace (250 ms, 500 ms or 1 s) while the tab is hidden: its
 clock runs in a Web Worker, which browsers don't throttle like background tabs.
 The tab title shows the current status (🟢 / 🟡 / 🔴). Time the computer spends
-asleep is marked as paused and not counted as downtime.
+asleep is marked as paused and not counted as downtime, and so is time the
+browser keeps the tab frozen to save power (reported by Chromium-based browsers
+through the `freeze` / `resume` events; elsewhere the jump of the probe's clock
+gives it away). Probes in flight during a pause are not counted either.
+
+While a session runs and the page is on screen, the monitor holds a
+[screen wake lock](https://developer.mozilla.org/docs/Web/API/Screen_Wake_Lock_API),
+so the screen, and with it the computer, doesn't go to sleep. Browsers offer it
+only in a secure context (HTTPS or `localhost`) and release it while the page is
+hidden; the "Keep screen awake" checkbox next to Start turns it off.
 
 For the UDP probe the browser must reach the server's UDP port (by default the
 same port number as `-addr`) directly; reverse proxies only forward HTTP. The
@@ -132,6 +145,44 @@ docker build -t one-more-speedtest .
 docker run --rm -p 8080:8080 -p 8080:8080/udp one-more-speedtest
 ```
 
+### Docker Compose with Traefik
+
+[`compose.yaml`](compose.yaml) runs the speed test behind an existing
+[Traefik](https://traefik.io/) with the Docker provider and HTTPS. By default
+the image is built from the source on GitHub (no clone needed); switch to the
+published image by swapping `build` for `image` in the file.
+
+```sh
+curl -fsSLO https://raw.githubusercontent.com/Tomansru/one-more-speedtest/main/compose.yaml
+curl -fsSL https://raw.githubusercontent.com/Tomansru/one-more-speedtest/main/.env.example -o .env
+# edit .env: SPEEDTEST_HOST, SPEEDTEST_PUBLIC_IP, Traefik network / entrypoint / resolver
+docker compose up -d --build
+```
+
+| Variable               | Default       | Description                                                    |
+|------------------------|---------------|----------------------------------------------------------------|
+| `SPEEDTEST_HOST`       | —             | Domain Traefik routes to the speed test (required)             |
+| `SPEEDTEST_PUBLIC_IP`  | —             | Public IP browsers send the monitor's UDP probe to             |
+| `SPEEDTEST_UDP_PORT`   | `8080`        | UDP port of the probe, published under the same number         |
+| `SPEEDTEST_REF`        | `main`        | Branch or tag to build from                                    |
+| `TRAEFIK_NETWORK`      | `traefik`     | External Docker network Traefik is attached to                 |
+| `TRAEFIK_ENTRYPOINT`   | `websecure`   | Traefik HTTPS entrypoint                                       |
+| `TRAEFIK_CERTRESOLVER` | `letsencrypt` | Traefik certificate resolver                                   |
+
+Traefik only carries HTTP. The monitor's UDP probe goes straight to the
+published UDP port, so open it in the firewall and set `SPEEDTEST_PUBLIC_IP`;
+without them the monitor pings over HTTP/TCP. Don't attach compression or
+buffering middlewares to the router: they distort the measurements.
+
+### Installing as an app
+
+The pages carry a web app manifest, icons for every platform (including a
+maskable one for Android) and the matching meta tags, so the speed test can be
+added to the home screen or installed as an app. Chromium-based browsers offer
+installation only over HTTPS; on iOS, *Share → Add to Home Screen* works over
+plain HTTP too. There is no service worker on purpose: the speed test makes no
+sense offline, and a cache in the way of `/api/` would only distort results.
+
 ### Options
 
 | Flag           | Environment variable        | Default | Description                                                     |
@@ -163,6 +214,15 @@ Copying the result image to the clipboard requires a secure context (HTTPS or
 ```sh
 go vet ./...
 go test ./...
+```
+
+The UI scripts are plain JavaScript with JSDoc types and `// @ts-check`, served
+as they are. Editors with TypeScript support check them as you type; to check
+them all (CI does too):
+
+```sh
+npx -p typescript@6 tsc -p tsconfig.json         # page scripts
+npx -p typescript@6 tsc -p tsconfig.worker.json  # the monitor's worker
 ```
 
 ## License
