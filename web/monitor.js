@@ -1,3 +1,4 @@
+// @ts-check
 // One More Speedtest — stability monitor.
 // Pings the server until stopped and keeps session statistics: ping
 // distribution, rolling jitter, lost pings, spikes and drops. A session pings
@@ -24,12 +25,97 @@ const UDP_RECONNECT_MS = 2000; // silence after which a fresh channel is tried
 const PAUSE_MS = 5000; // clock jump that means sleep, as in the worker
 
 const FLAG_SPIKE = 1;
+const KEEP_AWAKE_KEY = "monitor.keepAwake";
 
-const $ = (sel) => document.querySelector(sel);
+/** @typedef {"udp" | "tcp"} Transport */
+
+/**
+ * A probe result.
+ * @typedef {object} Sample
+ * @property {number} t  send time, ms since the epoch
+ * @property {number | null} rtt  round trip, ms; null if lost
+ * @property {string} [reason]  why it was lost
+ */
+
+/**
+ * A run of lost pings long enough to count as a disconnect.
+ * @typedef {object} Drop
+ * @property {number} start
+ * @property {number | null} end  null while it lasts
+ * @property {number} pings  lost pings
+ * @property {string} reason  why the first one was lost
+ */
+
+/**
+ * Time the probe could not run: the computer slept or the tab was frozen.
+ * @typedef {{kind: "pause", t: number, end: number, frozen: boolean}} Pause
+ */
+
+/**
+ * A row of the event log. Losses and spikes close in time share a row.
+ * @typedef {{kind: "start", t: number, interval: number, probe: Transport}
+ *   | {kind: "stop" | "udp-reconnect" | "offline" | "online", t: number}
+ *   | {kind: "udp-unavailable", t: number, reason: string}
+ *   | {kind: "drop", t: number, drop: Drop}
+ *   | {kind: "loss" | "spike", t: number, end: number, count: number, max: number, reason?: string}
+ *   | Pause} MonitorEvent
+ */
+
+/**
+ * Statistics of one monitoring session.
+ * @typedef {object} Session
+ * @property {number} interval  ms between pings
+ * @property {number} start
+ * @property {number | null} end  null while it runs
+ * @property {number[]} t  per ping: send time
+ * @property {number[]} rtt  per ping: RTT, NaN = lost
+ * @property {number[]} jump  per ping: |Δ| to the previous reply, NaN = none
+ * @property {number[]} flags  per ping: FLAG_* bits
+ * @property {Uint32Array} hist  RTT histogram, HIST_STEP_MS per bin
+ * @property {number} sent
+ * @property {number} received
+ * @property {number} lost
+ * @property {number} sum  sum of RTTs
+ * @property {number} min
+ * @property {number} max
+ * @property {number} last  latest RTT, NaN if lost
+ * @property {number} prevRtt  previous reply's RTT, NaN after a loss
+ * @property {number} jumpSum
+ * @property {number} jumpCount
+ * @property {number} jumpMax
+ * @property {{t: number, jump: number}[]} window  jumps inside JITTER_WINDOW_MS
+ * @property {number} windowSum
+ * @property {number} jitter  over the window, NaN until it has enough jumps
+ * @property {number} jitterMin
+ * @property {number} jitterMax
+ * @property {number} spikes
+ * @property {number} lastSpike  time of the latest spike, 0 = none
+ * @property {number} lastLoss  time of the latest loss, 0 = none
+ * @property {number} streak  consecutive lost pings
+ * @property {boolean} dropOpen  the current streak is a drop
+ * @property {number} streakStart
+ * @property {string} streakReason
+ * @property {Drop[]} drops
+ * @property {Pause[]} pauses
+ * @property {number} paused  total paused time
+ * @property {MonitorEvent[]} events
+ * @property {number} eventsVersion  bumped on every change to the events
+ */
+
+/**
+ * Returns the element matching `sel` in `root`; the page markup guarantees it exists.
+ * @template {Element} [T=HTMLElement]
+ * @param {string} sel
+ * @param {ParentNode} [root]
+ * @returns {T}
+ */
+const $ = (sel, root = document) => /** @type {T} */ (root.querySelector(sel));
 
 const ui = {
   toggle: $("#toggle"),
-  interval: $("#interval"),
+  interval: /** @type {HTMLFieldSetElement} */ ($("#interval")),
+  keepAwake: /** @type {HTMLInputElement} */ ($("#keep-awake")),
+  keepAwakeOption: $("#keep-awake-option"),
   status: $("#status"),
   stateLabel: $("#state-label"),
   stateDetail: $("#state-detail"),
@@ -43,22 +129,24 @@ const ui = {
     loss: $("#c-loss"),
     drops: $("#c-drops"),
   },
-  chartPing: $("#chart-ping"),
-  chartJitter: $("#chart-jitter"),
+  chartPing: /** @type {HTMLCanvasElement} */ ($("#chart-ping")),
+  chartJitter: /** @type {HTMLCanvasElement} */ ($("#chart-jitter")),
   events: $("#events"),
   eventsEmpty: $("#events-empty"),
-  exportCsv: $("#export"),
+  exportCsv: /** @type {HTMLButtonElement} */ ($("#export")),
 };
 
 /* ------------------------------------------------------------------ */
 /* Formatting                                                          */
 /* ------------------------------------------------------------------ */
 
+/** @param {number} ms */
 function fmtMs(ms) {
   if (!Number.isFinite(ms)) return "—";
   return ms < 10 ? ms.toFixed(1) : ms.toFixed(0);
 }
 
+/** @param {number} p */
 function fmtPct(p) {
   if (!Number.isFinite(p)) return "—";
   if (p === 0) return "0";
@@ -66,17 +154,25 @@ function fmtPct(p) {
   return p < 10 ? p.toFixed(1) : p.toFixed(0);
 }
 
+/** @param {number} n */
 function pad2(n) {
   return String(n).padStart(2, "0");
 }
 
+/**
+ * @param {number} t  ms since the epoch
+ * @param {boolean} [seconds]
+ */
 function fmtClock(t, seconds = true) {
   const d = new Date(t);
   const hm = `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
   return seconds ? `${hm}:${pad2(d.getSeconds())}` : hm;
 }
 
-// 1:02:03 / 2:03
+/**
+ * 1:02:03 / 2:03
+ * @param {number} ms
+ */
 function fmtElapsed(ms) {
   const sec = Math.floor(ms / 1000);
   const h = Math.floor(sec / 3600);
@@ -85,7 +181,10 @@ function fmtElapsed(ms) {
   return h ? `${h}:${pad2(m)}:${pad2(s)}` : `${m}:${pad2(s)}`;
 }
 
-// 0.8 s / 12 s / 3 min 12 s / 1 h 05 min
+/**
+ * 0.8 s / 12 s / 3 min 12 s / 1 h 05 min
+ * @param {number} ms
+ */
 function fmtDuration(ms) {
   if (!Number.isFinite(ms)) return "—";
   if (ms < 10_000) return `${(ms / 1000).toFixed(1)} s`;
@@ -95,6 +194,7 @@ function fmtDuration(ms) {
   return `${Math.floor(sec / 3600)} h ${pad2(Math.floor((sec % 3600) / 60))} min`;
 }
 
+/** @param {string} name */
 function cssVar(name) {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 }
@@ -103,13 +203,15 @@ function cssVar(name) {
 /* Session statistics                                                  */
 /* ------------------------------------------------------------------ */
 
+/**
+ * @param {number} interval
+ * @returns {Session}
+ */
 function newSession(interval) {
   return {
     interval,
     start: Date.now(),
     end: null,
-    // One entry per ping: send time, RTT (NaN = lost), |Δ| to the previous
-    // reply (NaN = none) and flags.
     t: [],
     rtt: [],
     jump: [],
@@ -126,7 +228,7 @@ function newSession(interval) {
     jumpSum: 0,
     jumpCount: 0,
     jumpMax: 0,
-    window: [], // {t, jump} inside JITTER_WINDOW_MS
+    window: [],
     windowSum: 0,
     jitter: NaN,
     jitterMin: Infinity,
@@ -134,18 +236,23 @@ function newSession(interval) {
     spikes: 0,
     lastSpike: 0,
     lastLoss: 0,
-    streak: 0, // consecutive lost pings
-    dropOpen: false, // the current streak is a drop
+    streak: 0,
+    dropOpen: false,
     streakStart: 0,
     streakReason: "",
-    drops: [], // {start, end, pings, reason}; end is null while it lasts
-    pauses: [], // {from, to}
+    drops: [],
+    pauses: [],
     paused: 0,
     events: [],
     eventsVersion: 0,
   };
 }
 
+/**
+ * RTT percentile from the histogram, ms.
+ * @param {Session} s
+ * @param {number} p  0–1
+ */
 function percentile(s, p) {
   if (!s.received) return NaN;
   const target = Math.max(1, Math.ceil(p * s.received));
@@ -157,6 +264,13 @@ function percentile(s, p) {
   return s.max;
 }
 
+/**
+ * @param {Session} s
+ * @param {number} t
+ * @param {number} rtt
+ * @param {number} jump
+ * @param {number} flags
+ */
 function pushSample(s, t, rtt, jump, flags) {
   s.t.push(t);
   s.rtt.push(rtt);
@@ -168,13 +282,25 @@ function pushSample(s, t, rtt, jump, flags) {
   }
 }
 
+/**
+ * @param {Session} s
+ * @param {MonitorEvent} event
+ */
 function addEvent(s, event) {
   s.events.push(event);
   if (s.events.length > MAX_EVENTS) s.events.shift();
   s.eventsVersion++;
 }
 
-// Losses and spikes come in bursts; close ones are folded into one row.
+/**
+ * Losses and spikes come in bursts; close ones are folded into one row.
+ * @param {Session} s
+ * @param {"loss" | "spike"} kind
+ * @param {number} t
+ * @param {number} value  RTT of a spike
+ * @param {string} [reason]  why a ping was lost
+ * @param {number} [count]
+ */
 function addMergedEvent(s, kind, t, value, reason, count = 1) {
   const last = s.events.at(-1);
   if (last?.kind === kind && t - last.end <= MERGE_MS) {
@@ -187,7 +313,11 @@ function addMergedEvent(s, kind, t, value, reason, count = 1) {
   addEvent(s, { kind, t, end: t, count, max: value, reason });
 }
 
-function addSample(s, { t, rtt, reason }) {
+/**
+ * @param {Session} s
+ * @param {Sample} sample
+ */
+function addSample(s, { t, rtt, reason = "" }) {
   s.sent++;
 
   if (rtt === null) {
@@ -201,7 +331,7 @@ function addSample(s, { t, rtt, reason }) {
     }
     s.streak++;
     if (s.dropOpen) {
-      s.drops.at(-1).pings = s.streak;
+      s.drops[s.drops.length - 1].pings = s.streak;
     } else if (s.streak >= DROP_STREAK && t - s.streakStart + s.interval >= DROP_MIN_MS) {
       const drop = { start: s.streakStart, end: null, pings: s.streak, reason: s.streakReason };
       s.drops.push(drop);
@@ -232,7 +362,10 @@ function addSample(s, { t, rtt, reason }) {
     s.windowSum += jump;
   }
   s.prevRtt = rtt;
-  while (s.window.length && s.window[0].t <= t - JITTER_WINDOW_MS) s.windowSum -= s.window.shift().jump;
+  while (s.window.length && s.window[0].t <= t - JITTER_WINDOW_MS) {
+    s.windowSum -= s.window[0].jump;
+    s.window.shift();
+  }
   if (s.window.length >= JITTER_MIN_JUMPS) {
     s.jitter = s.windowSum / s.window.length;
     s.jitterMin = Math.min(s.jitterMin, s.jitter);
@@ -251,10 +384,14 @@ function addSample(s, { t, rtt, reason }) {
   pushSample(s, t, rtt, jump, flags);
 }
 
-// A reply (or the end of the session) closes a run of lost pings.
+/**
+ * A reply (or the end of the session) closes a run of lost pings.
+ * @param {Session} s
+ * @param {number} t
+ */
 function endStreak(s, t) {
   if (s.dropOpen) {
-    s.drops.at(-1).end = t;
+    s.drops[s.drops.length - 1].end = t;
     s.dropOpen = false;
     s.eventsVersion++;
   } else {
@@ -263,18 +400,55 @@ function endStreak(s, t) {
   s.streak = 0;
 }
 
-function addPause(s, { from, to }) {
-  s.pauses.push({ from, to });
+/**
+ * Records time the probe could not run. The worker's clock and the page's
+ * freeze events can both report the same pause: overlapping reports merge.
+ * @param {Session} s
+ * @param {number} from
+ * @param {number} to
+ * @param {boolean} [frozen]  the browser froze the tab, as opposed to the computer sleeping
+ */
+function addPause(s, from, to, frozen = false) {
+  const last = s.pauses.at(-1);
+  if (last && from <= last.end && to >= last.t) {
+    const before = last.end - last.t;
+    last.t = Math.min(last.t, from);
+    last.end = Math.max(last.end, to);
+    last.frozen ||= frozen;
+    s.paused += last.end - last.t - before;
+    s.eventsVersion++;
+    return;
+  }
+  /** @type {Pause} */
+  const pause = { kind: "pause", t: from, end: to, frozen };
+  s.pauses.push(pause);
   s.paused += to - from;
-  addEvent(s, { kind: "pause", t: from, end: to });
+  addEvent(s, pause);
 }
 
+/**
+ * Adds a probe result, unless the probe was in flight during the latest
+ * pause: whether and when its reply came says nothing about the network.
+ * @param {Session} s
+ * @param {Sample} sample
+ */
+function record(s, sample) {
+  const pause = s.pauses.at(-1);
+  if (pause && sample.t < pause.end && Date.now() > pause.t) return;
+  addSample(s, sample);
+}
+
+/** @param {Session} s */
 function finishSession(s) {
   s.end = Date.now();
   if (s.streak) endStreak(s, s.end);
   addEvent(s, { kind: "stop", t: s.end });
 }
 
+/**
+ * @param {Session} s
+ * @param {number} now
+ */
 function downtime(s, now) {
   let total = 0;
   let longest = 0;
@@ -286,6 +460,11 @@ function downtime(s, now) {
   return { total, longest };
 }
 
+/**
+ * @param {Session | null} s
+ * @param {number} now
+ * @returns {{state: string, label: string, detail: string}}
+ */
 function sessionState(s, now) {
   if (!s) return { state: "idle", label: "Idle", detail: "Press Start to begin" };
   if (s.end) {
@@ -297,7 +476,7 @@ function sessionState(s, now) {
   }
   if (!s.sent) return { state: "stable", label: "Starting…", detail: "Waiting for the first reply" };
   if (s.lastLoss && now - s.lastLoss < UNSTABLE_MS) {
-    const dropped = s.drops.at(-1)?.end >= s.lastLoss;
+    const dropped = (s.drops.at(-1)?.end ?? 0) >= s.lastLoss;
     return { state: "unstable", label: "Unstable", detail: `${dropped ? "Connection dropped" : "Lost ping"} in the last 30 s` };
   }
   if (s.lastSpike && now - s.lastSpike < UNSTABLE_MS) {
@@ -315,6 +494,11 @@ const TIME_STEPS = [5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200, 108
   (s) => s * 1000,
 );
 
+/**
+ * Index of the first element of the sorted `arr` that is not below `value`.
+ * @param {number[]} arr
+ * @param {number} value
+ */
 function lowerBound(arr, value) {
   let lo = 0;
   let hi = arr.length;
@@ -326,6 +510,7 @@ function lowerBound(arr, value) {
   return lo;
 }
 
+/** @param {number} v */
 function niceCeil(v) {
   const p = 10 ** Math.floor(Math.log10(v));
   for (const m of [1, 2, 2.5, 5, 10]) if (v <= m * p) return m * p;
@@ -337,8 +522,30 @@ function niceCeil(v) {
 // the chart only scrolls instead of averaging the samples differently.
 const BUCKET_STEPS = [250, 500, 1000, 2000, 5000, 10_000, 15_000, 30_000, 60_000, 120_000, 300_000, 600_000, 1_800_000, 3_600_000];
 
-// Aggregates the samples of [from, to) into time-aligned buckets of `width` ms;
-// the first bucket starts at or before `from`.
+/**
+ * Pings aggregated over one stretch of time.
+ * @typedef {object} Bucket
+ * @property {number} count  replies
+ * @property {number} sum  sum of their RTTs
+ * @property {number} max  worst RTT
+ * @property {number} lost  lost pings
+ * @property {number} jsum  sum of the jumps between consecutive replies
+ * @property {number} jn  number of jumps
+ * @property {boolean} spike  a reply was a spike
+ */
+
+/** @typedef {{x: number, y: number, w: number, h: number}} Plot */
+/** @typedef {{x: number, v: number, b: Bucket}} Point */
+
+/**
+ * Aggregates the samples of [from, to) into time-aligned buckets of `width` ms;
+ * the first bucket starts at or before `from`.
+ * @param {Session} s
+ * @param {number} from
+ * @param {number} to
+ * @param {number} width
+ * @returns {{buckets: Bucket[], first: number}}
+ */
 function bucketize(s, from, to, width) {
   const first = Math.floor(from / width) * width;
   const n = Math.max(1, Math.ceil((to - first) / width));
@@ -362,7 +569,11 @@ function bucketize(s, from, to, width) {
   return { buckets: b, first };
 }
 
-// Keeps the series inside the plot; the first bucket may start left of it.
+/**
+ * Keeps the series inside the plot; the first bucket may start left of it.
+ * @param {CanvasRenderingContext2D} ctx
+ * @param {Plot} plot
+ */
 function clipPlot(ctx, plot) {
   ctx.save();
   ctx.beginPath();
@@ -370,20 +581,33 @@ function clipPlot(ctx, plot) {
   ctx.clip();
 }
 
+/**
+ * Sizes the canvas for the screen and clears it.
+ * @param {HTMLCanvasElement} canvas
+ */
 function setupCanvas(canvas) {
   const dpr = window.devicePixelRatio || 1;
   const { width, height } = canvas.getBoundingClientRect();
   canvas.width = Math.round(width * dpr);
   canvas.height = Math.round(height * dpr);
-  const ctx = canvas.getContext("2d");
+  const ctx = /** @type {CanvasRenderingContext2D} */ (canvas.getContext("2d"));
   ctx.scale(dpr, dpr);
   return { ctx, w: width, h: height };
 }
 
-// Splits bucket points into line segments: a bucket with only lost pings or a
-// long time gap (pause) breaks the line.
+/**
+ * Splits bucket points into line segments: a bucket with only lost pings or a
+ * long time gap (pause) breaks the line.
+ * @param {Bucket[]} buckets
+ * @param {(i: number) => number} x
+ * @param {(b: Bucket) => number} value
+ * @param {number} gapBuckets
+ * @returns {Point[][]}
+ */
 function segments(buckets, x, value, gapBuckets) {
+  /** @type {Point[][]} */
   const out = [];
+  /** @type {Point[] | null} */
   let seg = null;
   let lastIdx = -Infinity;
   buckets.forEach((b, i) => {
@@ -400,6 +624,12 @@ function segments(buckets, x, value, gapBuckets) {
   return out;
 }
 
+/**
+ * @param {CanvasRenderingContext2D} ctx
+ * @param {Plot} plot
+ * @param {number} yMax
+ * @param {{grid: string, muted: string}} colors
+ */
 function drawGrid(ctx, plot, yMax, colors) {
   ctx.font = `11px ${cssVar("--font")}`;
   ctx.textAlign = "right";
@@ -417,9 +647,17 @@ function drawGrid(ctx, plot, yMax, colors) {
   }
 }
 
+/**
+ * @param {CanvasRenderingContext2D} ctx
+ * @param {Plot} plot
+ * @param {number} from
+ * @param {number} to
+ * @param {{grid: string, muted: string}} colors
+ * @param {boolean} labels
+ */
 function drawTimeGrid(ctx, plot, from, to, colors, labels) {
   const span = to - from;
-  const step = TIME_STEPS.find((st) => (st / span) * plot.w >= 90) ?? TIME_STEPS.at(-1);
+  const step = TIME_STEPS.find((st) => (st / span) * plot.w >= 90) ?? TIME_STEPS[TIME_STEPS.length - 1];
   const offset = new Date(from).getTimezoneOffset() * 60_000;
   ctx.textAlign = "center";
   ctx.textBaseline = "top";
@@ -437,7 +675,15 @@ function drawTimeGrid(ctx, plot, from, to, colors, labels) {
   }
 }
 
-// Shades [start, end) time ranges over the full plot height.
+/**
+ * Shades [start, end) time ranges over the full plot height.
+ * @param {CanvasRenderingContext2D} ctx
+ * @param {Plot} plot
+ * @param {number} from
+ * @param {number} to
+ * @param {[number, number][]} ranges
+ * @param {string} color
+ */
 function drawBands(ctx, plot, from, to, ranges, color) {
   ctx.fillStyle = color;
   for (const [start, end] of ranges) {
@@ -448,12 +694,19 @@ function drawBands(ctx, plot, from, to, ranges, color) {
   }
 }
 
+/**
+ * @param {CanvasRenderingContext2D} ctx
+ * @param {Point[][]} segs
+ * @param {(p: Point) => number} y
+ * @param {string} color
+ * @param {{y: (p: Point) => number, base: number, color: string}} [fillTo]  area under the line
+ */
 function strokeSegments(ctx, segs, y, color, fillTo) {
   for (const seg of segs) {
     if (fillTo !== undefined) {
       ctx.beginPath();
       seg.forEach((p, i) => (i ? ctx.lineTo(p.x, fillTo.y(p)) : ctx.moveTo(p.x, fillTo.y(p))));
-      ctx.lineTo(seg.at(-1).x, fillTo.base);
+      ctx.lineTo(seg[seg.length - 1].x, fillTo.base);
       ctx.lineTo(seg[0].x, fillTo.base);
       ctx.closePath();
       ctx.fillStyle = fillTo.color;
@@ -474,12 +727,24 @@ function strokeSegments(ctx, segs, y, color, fillTo) {
   }
 }
 
+/**
+ * @param {string} name
+ * @returns {string}
+ */
+function checkedValue(name) {
+  return /** @type {HTMLInputElement} */ ($(`input[name="${name}"]:checked`)).value;
+}
+
+/**
+ * @param {Session | null} s
+ * @param {number} now
+ */
 function renderCharts(s, now) {
   const ping = setupCanvas(ui.chartPing);
   const jit = setupCanvas(ui.chartJitter);
   if (!s) return;
 
-  const windowMs = Number(document.querySelector('input[name="window"]:checked').value) * 1000;
+  const windowMs = Number(checkedValue("window")) * 1000;
   const to = s.end ?? now;
   // A young session fills the plot instead of hugging its right edge.
   const from = Math.min(windowMs ? Math.max(to - windowMs, s.start) : s.start, to - 10_000);
@@ -492,6 +757,11 @@ function renderCharts(s, now) {
     muted: cssVar("--muted"),
     grid: cssVar("--track"),
   };
+  /**
+   * @param {{w: number, h: number}} size
+   * @param {boolean} axis  leaves room for time labels
+   * @returns {Plot}
+   */
   const plotOf = ({ w, h }, axis) => ({
     x: CHART_PAD.left,
     y: CHART_PAD.top,
@@ -503,14 +773,18 @@ function renderCharts(s, now) {
   if (pp.w < 20 || pp.h < 10) return;
 
   // The finest step that keeps buckets at least 2 px wide.
-  const width = BUCKET_STEPS.find((w) => (to - from) / w <= pp.w / 2) ?? BUCKET_STEPS.at(-1);
+  const width = BUCKET_STEPS.find((w) => (to - from) / w <= pp.w / 2) ?? BUCKET_STEPS[BUCKET_STEPS.length - 1];
   const { buckets, first } = bucketize(s, from, to, width);
+  /** @param {number} i */
   const bx = (i) => pp.x + ((first + (i + 0.5) * width - from) / (to - from)) * pp.w;
   const gap = Math.max(2, Math.ceil((s.interval * 3) / width));
 
+  /** @type {[number, number][]} */
   const drops = s.drops.map((d) => [d.start, d.end ?? to]);
-  const pauses = s.pauses.map((p) => [p.from, p.to]);
+  /** @type {[number, number][]} */
+  const pauses = s.pauses.map((p) => [p.t, p.end]);
   // Single lost pings get a mark of their own; drops are already shaded.
+  /** @type {[number, number][]} */
   const lostMarks = [];
   buckets.forEach((b, i) => {
     const t0 = first + i * width;
@@ -520,6 +794,7 @@ function renderCharts(s, now) {
 
   // Ping: shaded worst value per bucket, line for the average, spike dots.
   const pingMax = niceCeil(Math.max(10, ...buckets.map((b) => b.max)) * 1.05);
+  /** @param {number} v */
   const py = (v) => pp.y + pp.h - (Math.min(v, pingMax) / pingMax) * pp.h;
   drawGrid(ping.ctx, pp, pingMax, colors);
   drawTimeGrid(ping.ctx, pp, from, to, colors, false);
@@ -543,8 +818,10 @@ function renderCharts(s, now) {
   ping.ctx.restore();
 
   // Jitter: average |Δ| between consecutive pings per bucket.
+  /** @param {Bucket} b */
   const jitterOf = (b) => (b.jn ? b.jsum / b.jn : NaN);
   const jitterMax = niceCeil(Math.max(5, ...buckets.map((b) => jitterOf(b) || 0)) * 1.05);
+  /** @param {number} v */
   const jy = (v) => jp.y + jp.h - (Math.min(v, jitterMax) / jitterMax) * jp.h;
   drawGrid(jit.ctx, jp, jitterMax, colors);
   drawTimeGrid(jit.ctx, jp, from, to, colors, true);
@@ -565,8 +842,19 @@ function renderCharts(s, now) {
 
 const NO_UDP_PATH = "no UDP path to the server (blocked by a firewall or NAT?)";
 
-// Opens a WebRTC data channel to the server, unordered and without
-// retransmissions: whatever the network drops stays dropped, as for games.
+/** @typedef {{pc: RTCPeerConnection, dc: RTCDataChannel}} Channel */
+
+/**
+ * A probe on its way: rtt is undefined until it is answered or given up on
+ * (null).
+ * @typedef {{seq: number, t: number, sent: number, rtt: number | null | undefined, reason: string}} Probe
+ */
+
+/**
+ * Opens a WebRTC data channel to the server, unordered and without
+ * retransmissions: whatever the network drops stays dropped, as for games.
+ * @returns {Promise<Channel>}
+ */
 async function openChannel() {
   const pc = new RTCPeerConnection();
   const dc = pc.createDataChannel("ping", { ordered: false, maxRetransmits: 0 });
@@ -582,7 +870,8 @@ async function openChannel() {
     if (res.status === 404 || res.status === 405) throw new Error("the UDP probe is disabled on the server");
     if (!res.ok) throw new Error(`the server answered HTTP ${res.status}`);
     await pc.setRemoteDescription(await res.json());
-    await new Promise((resolve, reject) => {
+    /** @type {Promise<void>} */
+    const opened = new Promise((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error(NO_UDP_PATH)), UDP_CONNECT_TIMEOUT_MS);
       dc.onopen = () => {
         clearTimeout(timer);
@@ -594,6 +883,7 @@ async function openChannel() {
         reject(new Error(NO_UDP_PATH));
       };
     });
+    await opened;
     return { pc, dc };
   } catch (err) {
     pc.close();
@@ -603,11 +893,15 @@ async function openChannel() {
 
 // Sends one 4-byte sequence number per clock tick and matches the echoes.
 class UdpProbe {
+  /** @param {(sample: Sample) => void} onSample */
   constructor(onSample) {
     this.onSample = onSample;
+    /** @type {(() => void) | null} */
     this.onReconnect = null;
-    this.pending = []; // probes in send order: {seq, t, sent, rtt, reason}
+    /** @type {Probe[]} in send order */
+    this.pending = [];
     this.seq = 0;
+    /** @type {Channel | null} */
     this.channel = null;
     this.lastReply = 0;
     this.lastAttempt = 0;
@@ -615,6 +909,7 @@ class UdpProbe {
     this.closed = false;
   }
 
+  /** @returns {Promise<boolean>} false if the probe was closed meanwhile */
   async connect() {
     const ch = await openChannel();
     if (this.closed) {
@@ -629,8 +924,11 @@ class UdpProbe {
     return true;
   }
 
-  // A silent channel may be dead for good (e.g. the server restarted), so a
-  // fresh one is tried every few seconds; the old one serves until it opens.
+  /**
+   * A silent channel may be dead for good (e.g. the server restarted), so a
+   * fresh one is tried every few seconds; the old one serves until it opens.
+   * @param {number} now  performance.now()
+   */
   reconnect(now) {
     this.lastAttempt = now;
     this.reconnecting = true;
@@ -640,11 +938,13 @@ class UdpProbe {
       .finally(() => (this.reconnecting = false));
   }
 
+  /** @param {number} t  send time, ms since the epoch */
   tick(t) {
     const now = performance.now();
     this.flush(now);
     if (!this.reconnecting && now - Math.max(this.lastReply, this.lastAttempt) > UDP_RECONNECT_MS) this.reconnect(now);
 
+    /** @type {Probe} */
     const probe = { seq: this.seq, t, sent: now, rtt: undefined, reason: "timeout" };
     this.seq = (this.seq + 1) >>> 0;
     this.pending.push(probe);
@@ -663,6 +963,7 @@ class UdpProbe {
     this.flush(now);
   }
 
+  /** @param {unknown} data */
   reply(data) {
     if (!(data instanceof ArrayBuffer) || data.byteLength < 4) return;
     const seq = new DataView(data).getUint32(0);
@@ -674,8 +975,11 @@ class UdpProbe {
     this.flush(now);
   }
 
-  // Results leave in send order, so the statistics see a proper sequence: a
-  // reply waits until every older probe is answered or timed out.
+  /**
+   * Results leave in send order, so the statistics see a proper sequence: a
+   * reply waits until every older probe is answered or timed out.
+   * @param {number} now  performance.now()
+   */
   flush(now) {
     while (this.pending.length) {
       const p = this.pending[0];
@@ -702,21 +1006,48 @@ class UdpProbe {
 /* Rendering                                                           */
 /* ------------------------------------------------------------------ */
 
-// The current run: {interval, transport, session, udp, lastTick, stopped}.
-// The session exists once the transport is chosen.
+/**
+ * The current run. The session exists once the transport is chosen.
+ * @typedef {object} Run
+ * @property {number} interval
+ * @property {Transport | "connecting"} transport
+ * @property {Session | null} session
+ * @property {UdpProbe | null} udp
+ * @property {number} lastTick  time of the latest clock tick
+ * @property {boolean} stopped
+ */
+
+/** @type {Run | null} */
 let run = null;
+/** @type {Worker | null} */
 let worker = null;
 let renderQueued = false;
+/** @type {{s: Session | null, version: number}} */
 let renderedEvents = { s: null, version: -1 };
 
+/** @typedef {keyof typeof ui.cards} Card */
+
+/**
+ * @param {Card} card
+ * @param {string} name
+ * @param {string} text
+ */
 function setStat(card, name, text) {
-  ui.cards[card].querySelector(`[data-stat="${name}"]`).textContent = text;
+  $(`[data-stat="${name}"]`, ui.cards[card]).textContent = text;
 }
 
+/**
+ * @param {Card} card
+ * @param {string} text
+ */
 function setValue(card, text) {
-  ui.cards[card].querySelector("[data-value]").textContent = text;
+  $("[data-value]", ui.cards[card]).textContent = text;
 }
 
+/**
+ * @param {Session | null} s
+ * @param {number} now
+ */
 function renderStats(s, now) {
   const has = s && s.received > 0;
   setValue("ping", has ? fmtMs(percentile(s, 0.5)) : "—");
@@ -738,24 +1069,27 @@ function renderStats(s, now) {
   setStat("loss", "spikes", s ? s.spikes.toLocaleString() : "—");
   setStat("loss", "last", s?.lastLoss ? fmtClock(s.lastLoss) : "—");
 
-  const down = s ? downtime(s, now) : null;
+  const down = s ? downtime(s, now) : { total: 0, longest: 0 };
   const monitored = s ? (s.end ?? now) - s.start - s.paused : 0;
   const uptime = monitored > 0 ? Math.max(0, 1 - down.total / monitored) * 100 : NaN;
   setValue("drops", s ? String(s.drops.length) : "—");
   setStat("drops", "downtime", s ? (down.total ? fmtDuration(down.total) : "0 s") : "—");
-  setStat("drops", "longest", down?.longest ? fmtDuration(down.longest) : "—");
+  setStat("drops", "longest", down.longest ? fmtDuration(down.longest) : "—");
   setStat("drops", "uptime", !s || !Number.isFinite(uptime) ? "—" : uptime === 100 ? "100%" : `${(Math.floor(uptime * 100) / 100).toFixed(2)}%`);
 
-  for (const [card, bad] of [
-    ["loss", s?.lost > 0],
-    ["drops", s?.drops.length > 0],
-  ]) {
-    ui.cards[card].classList.toggle("is-bad", Boolean(bad));
-  }
+  ui.cards.loss.classList.toggle("is-bad", Boolean(s && s.lost > 0));
+  ui.cards.drops.classList.toggle("is-bad", Boolean(s && s.drops.length > 0));
 }
 
+/**
+ * Title and detail of an event row.
+ * @param {MonitorEvent} e
+ * @param {number} now
+ * @returns {[string, string]}
+ */
 function eventText(e, now) {
-  const many = e.count > 1 ? ` ×${e.count}` : "";
+  /** @param {number} count */
+  const times = (count) => (count > 1 ? ` ×${count}` : "");
   switch (e.kind) {
     case "start": {
       const every = e.interval >= 1000 ? `${e.interval / 1000} s` : `${e.interval} ms`;
@@ -774,19 +1108,24 @@ function eventText(e, now) {
       return d.end ? ["Connection drop", `${fmtDuration(d.end - d.start)} · ${pings}`] : ["Connection down", `ongoing for ${fmtDuration(now - d.start)} · ${pings}`];
     }
     case "loss":
-      return [`Lost ping${many}`, e.reason];
+      return [`Lost ping${times(e.count)}`, e.reason ?? ""];
     case "spike":
-      return [`Latency spike${many}`, `${e.count > 1 ? "up to " : ""}${fmtMs(e.max)} ms`];
-    case "pause":
-      return ["Paused", `computer asleep or tab frozen for ${fmtDuration(e.end - e.t)}`];
+      return [`Latency spike${times(e.count)}`, `${e.count > 1 ? "up to " : ""}${fmtMs(e.max)} ms`];
+    case "pause": {
+      const span = fmtDuration(e.end - e.t);
+      return ["Paused", e.frozen ? `the browser froze the tab for ${span}` : `computer asleep or tab frozen for ${span}`];
+    }
     case "offline":
       return ["Browser went offline", "the device lost its network connection"];
     case "online":
       return ["Browser back online", ""];
   }
-  return [e.kind, ""];
 }
 
+/**
+ * @param {Session | null} s
+ * @param {number} now
+ */
 function renderEvents(s, now) {
   const ongoing = s?.dropOpen;
   const version = s ? s.eventsVersion : -1;
@@ -800,7 +1139,7 @@ function renderEvents(s, now) {
     const time = document.createElement("time");
     time.dateTime = new Date(e.t).toISOString();
     // Pauses state their length in the detail; drops and merged rows show a range.
-    const end = e.kind === "drop" ? e.drop.end : e.kind === "pause" ? null : e.end;
+    const end = e.kind === "drop" ? e.drop.end : e.kind === "loss" || e.kind === "spike" ? e.end : null;
     time.textContent = end && end - e.t >= 1000 ? `${fmtClock(e.t)}–${fmtClock(end)}` : fmtClock(e.t);
     const [title, detail] = eventText(e, now);
     const label = document.createElement("span");
@@ -822,6 +1161,10 @@ const TRANSPORTS = {
   tcp: ["TCP", "HTTP requests over TCP"],
 };
 
+/**
+ * @param {Session | null} s
+ * @param {number} now
+ */
 function renderStatus(s, now) {
   const st = run && !s ? { state: "starting", label: "Starting…", detail: TRANSPORTS.connecting[1] } : sessionState(s, now);
   ui.status.dataset.state = st.state;
@@ -838,6 +1181,10 @@ function renderStatus(s, now) {
 
 // The tab title doubles as a status light while the page is in the background.
 const BASE_TITLE = document.title;
+/**
+ * @param {Session | null} s
+ * @param {number} now
+ */
 function updateTitle(s, now) {
   if (!s || s.end) {
     document.title = BASE_TITLE;
@@ -875,13 +1222,14 @@ function queueRender() {
 let clock = 0;
 
 function selectedInterval() {
-  return Number(document.querySelector('input[name="interval"]:checked').value);
+  return Number(checkedValue("interval"));
 }
 
 // Picks the transport once: UDP when a channel opens, TCP otherwise. The
 // whole session then sticks with it, so its numbers mean one thing.
 async function start() {
   const interval = selectedInterval();
+  /** @type {Run} */
   const current = { interval, transport: "connecting", session: null, udp: null, lastTick: 0, stopped: false };
   run = current;
   ui.toggle.textContent = "Stop";
@@ -890,16 +1238,17 @@ async function start() {
   ui.exportCsv.disabled = true;
   clock = setInterval(sampled, 1000);
   sampled();
+  updateWakeLock();
 
   current.udp = new UdpProbe((sample) => {
-    addSample(current.session, sample);
+    if (current.session) record(current.session, sample);
     sampled();
   });
   let reason = "";
   try {
     await current.udp.connect();
   } catch (err) {
-    reason = err.message;
+    reason = /** @type {Error} */ (err).message;
   }
   if (current.stopped) return;
 
@@ -924,43 +1273,55 @@ async function start() {
 }
 
 function stop() {
-  run.stopped = true;
+  const r = run;
+  if (!r) return;
+  r.stopped = true;
   worker?.postMessage({ type: "stop" });
   clearInterval(clock);
-  run.udp?.close();
-  if (run.session) finishSession(run.session);
+  r.udp?.close();
+  if (r.session) finishSession(r.session);
   else run = null; // stopped while choosing the transport
   ui.toggle.textContent = "Start";
   ui.toggle.classList.remove("is-running");
   ui.interval.disabled = false;
+  updateWakeLock();
   sampled();
 }
 
-const running = () => run && !run.stopped;
+const running = () => Boolean(run && !run.stopped);
+
+/** The session of the current run, unless the run is stopped. */
+const liveSession = () => (run && !run.stopped ? run.session : null);
 
 function sampled() {
-  updateTitle(run?.session, Date.now());
+  updateTitle(run?.session ?? null, Date.now());
   queueRender();
 }
 
-// Worker clock tick: drives the UDP probe, which lives on the page.
-function tick(t) {
-  const r = run;
+/**
+ * Worker clock tick: drives the UDP probe, which lives on the page.
+ * @param {Run} r
+ * @param {number} t
+ */
+function tick(r, t) {
+  const { session, udp } = r;
+  if (!session || !udp) return;
   if (r.lastTick && t - r.lastTick > r.interval + PAUSE_MS) {
-    r.udp.discard();
-    addPause(r.session, { from: r.lastTick, to: t });
+    udp.discard();
+    addPause(session, r.lastTick, t);
   }
   r.lastTick = t;
-  r.udp.tick(t);
+  udp.tick(t);
 }
 
 function createWorker() {
   const w = new Worker("monitor-worker.js");
   w.onmessage = ({ data }) => {
-    if (!running() || !run.session) return;
-    if (data.type === "tick") return run.udp && tick(data.t);
-    if (data.type === "sample") addSample(run.session, data);
-    else if (data.type === "pause") addPause(run.session, data);
+    const s = liveSession();
+    if (!run || !s) return;
+    if (data.type === "tick") return tick(run, data.t);
+    if (data.type === "sample") record(s, data);
+    else if (data.type === "pause") addPause(s, data.from, data.to);
     sampled();
   };
   w.onerror = (err) => {
@@ -972,8 +1333,9 @@ function createWorker() {
 }
 
 function exportCsv() {
-  const s = run?.session;
-  if (!s) return;
+  const r = run;
+  const s = r?.session;
+  if (!r || !s) return;
   const rows = ["time,ping_ms,status"];
   for (let i = 0; i < s.t.length; i++) {
     const rtt = s.rtt[i];
@@ -984,29 +1346,110 @@ function exportCsv() {
   const d = new Date(s.start);
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
-  a.download = `stability-${run.transport}-${d.getFullYear()}${pad2(d.getMonth() + 1)}${pad2(d.getDate())}-${pad2(d.getHours())}${pad2(d.getMinutes())}.csv`;
+  a.download = `stability-${r.transport}-${d.getFullYear()}${pad2(d.getMonth() + 1)}${pad2(d.getDate())}-${pad2(d.getHours())}${pad2(d.getMinutes())}.csv`;
   document.body.append(a);
   a.click();
   a.remove();
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 }
 
+/* ------------------------------------------------------------------ */
+/* Keeping awake                                                       */
+/* ------------------------------------------------------------------ */
+
+// A sleeping device pauses the monitor, so while a session runs and the page
+// is on screen it holds a screen wake lock. Browsers release the lock when the
+// page is hidden; it is taken again when the page is shown.
+
+/** @type {WakeLockSentinel | null} */
+let wakeLock = null;
+let wakeLockPending = false;
+
+const wantWakeLock = () => running() && ui.keepAwake.checked && document.visibilityState === "visible";
+
+async function updateWakeLock() {
+  if (!("wakeLock" in navigator)) return;
+  if (!wantWakeLock()) {
+    wakeLock?.release().catch(() => {});
+    wakeLock = null;
+    return;
+  }
+  if (wakeLock || wakeLockPending) return;
+  wakeLockPending = true;
+  try {
+    const lock = await navigator.wakeLock.request("screen");
+    lock.addEventListener("release", () => {
+      if (wakeLock === lock) wakeLock = null;
+    });
+    wakeLock = lock;
+  } catch {
+    // Refused, e.g. by a battery saver: monitoring goes on without it.
+  } finally {
+    wakeLockPending = false;
+  }
+  if (!wantWakeLock()) updateWakeLock(); // stopped or hidden meanwhile
+}
+
+// The option shows only where the browser offers wake locks: not over plain
+// HTTP. Turning it off is remembered.
+function initKeepAwake() {
+  if (!("wakeLock" in navigator)) return;
+  try {
+    ui.keepAwake.checked = localStorage.getItem(KEEP_AWAKE_KEY) !== "off";
+  } catch {
+    // Storage blocked: keep the default.
+  }
+  ui.keepAwakeOption.hidden = false;
+  ui.keepAwake.addEventListener("change", () => {
+    try {
+      if (ui.keepAwake.checked) localStorage.removeItem(KEEP_AWAKE_KEY);
+      else localStorage.setItem(KEEP_AWAKE_KEY, "off");
+    } catch {
+      // Storage blocked: the choice lasts until the page is closed.
+    }
+    updateWakeLock();
+  });
+}
+
+/* ------------------------------------------------------------------ */
+/* Wiring                                                              */
+/* ------------------------------------------------------------------ */
+
 ui.toggle.addEventListener("click", () => (running() ? stop() : start()));
 ui.exportCsv.addEventListener("click", exportCsv);
 document.querySelectorAll('input[name="window"]').forEach((el) => el.addEventListener("change", queueRender));
 window.addEventListener("resize", queueRender);
-matchMedia("(prefers-color-scheme: light)").addEventListener("change", queueRender);
+window.addEventListener("themechange", queueRender);
+document.addEventListener("visibilitychange", updateWakeLock);
 
-for (const kind of ["offline", "online"]) {
+for (const kind of /** @type {const} */ (["offline", "online"])) {
   window.addEventListener(kind, () => {
-    if (!running() || !run.session) return;
-    addEvent(run.session, { kind, t: Date.now() });
+    const s = liveSession();
+    if (!s) return;
+    addEvent(s, { kind, t: Date.now() });
     queueRender();
   });
 }
 
-window.addEventListener("beforeunload", (e) => {
-  if (running() && run.session?.sent) e.preventDefault();
+// Chromium freezes hidden tabs to save power (energy saver, Android) and says
+// so with the Page Lifecycle events; the worker freezes with the page. The
+// frozen time is a pause, not an outage. Other browsers give no notice: there
+// the clock jump tells.
+let frozenAt = 0;
+document.addEventListener("freeze", () => (frozenAt = Date.now()));
+document.addEventListener("resume", () => {
+  const from = frozenAt;
+  frozenAt = 0;
+  const s = liveSession();
+  if (!from || !s) return;
+  run?.udp?.discard();
+  addPause(s, from, Date.now(), true);
+  sampled();
 });
 
+window.addEventListener("beforeunload", (e) => {
+  if (liveSession()?.sent) e.preventDefault();
+});
+
+initKeepAwake();
 render();

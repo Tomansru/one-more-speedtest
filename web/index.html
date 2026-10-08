@@ -2,12 +2,23 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="color-scheme" content="dark light">
+  <meta name="theme-color" content="#f4f6fb" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0b0e14" media="(prefers-color-scheme: dark)">
+  <meta name="format-detection" content="telephone=no">
   <title>One More Speedtest</title>
   <meta name="description" content="A simple, self-hosted internet speed test: ping, jitter, download and upload.">
+  <meta name="application-name" content="Speedtest">
+  <meta name="apple-mobile-web-app-title" content="Speedtest">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="favicon.ico" sizes="32x32">
   <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="apple-touch-icon.png">
   <link rel="stylesheet" href="style.css">
+  <script src="theme.js"></script>
 </head>
 <body>
   <main class="app">
@@ -20,7 +31,7 @@
         </svg>
         <span>one more <strong>speedtest</strong></span>
       </div>
-      <div class="client" id="client-info" aria-live="polite"></div>
+      <button class="client" id="client-info" type="button" title="Copy to clipboard" aria-live="polite" hidden></button>
     </header>
 
     <section class="controls" aria-label="Test settings">
@@ -106,6 +117,12 @@
       <span>Self-hosted · no trackers · no third-party requests</span>
       <span aria-hidden="true">·</span>
       <a class="quiet-link" href="monitor" title="Endless ping test that records drops, lost pings and jitter">Stability monitor</a>
+      <fieldset class="segmented theme-switch" id="theme">
+        <legend>Theme</legend>
+        <label title="Auto: follow the system"><input type="radio" name="theme" value="auto" aria-label="Auto theme" checked><span><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="5.5" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M8 2.5a5.5 5.5 0 0 1 0 11z" fill="currentColor"/></svg></span></label>
+        <label title="Light"><input type="radio" name="theme" value="light" aria-label="Light theme"><span><svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="3" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M8 1.5v1.2M8 13.3v1.2M1.5 8h1.2M13.3 8h1.2M3.4 3.4l.85.85M11.75 11.75l.85.85M3.4 12.6l.85-.85M11.75 4.25l.85-.85" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg></span></label>
+        <label title="Dark"><input type="radio" name="theme" value="dark" aria-label="Dark theme"><span><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M14 8.53A6 6 0 1 1 7.47 2 4.67 4.67 0 0 0 14 8.53z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg></span></label>
+      </fieldset>
     </footer>
   </main>
 

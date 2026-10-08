@@ -1,3 +1,4 @@
+// @ts-check
 // One More Speedtest — stability monitor: the HTTP/TCP probe, or the clock
 // that paces the UDP probe on the page.
 // Runs in a dedicated worker: browsers heavily throttle timers of background
@@ -13,12 +14,21 @@ let run = 0; // id of the active loop; bumping it stops the previous one
 
 const rand = () => Math.random().toString(36).slice(2);
 
+/**
+ * @param {number} ms
+ * @returns {Promise<void>}
+ */
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, Math.max(0, ms)));
 }
 
-// One round trip, like pingOnce() on the main page: Resource Timing
-// (request → first byte) when available, wall clock otherwise.
+/**
+ * One round trip, like pingOnce() on the main page: Resource Timing
+ * (request → first byte) when available, wall clock otherwise.
+ * @param {number} timeout  ms
+ * @returns {Promise<{rtt: number | null, reason?: string, wall?: number}>}
+ *   rtt is null if the ping was lost; wall is how long a lost one took
+ */
 async function ping(timeout) {
   const url = `${PING_URL}?r=${rand()}`;
   const ctrl = new AbortController();
@@ -30,7 +40,7 @@ async function ping(timeout) {
     const wall = performance.now() - t0;
     if (!res.ok) return { rtt: null, reason: `HTTP ${res.status}` };
 
-    const entry = performance.getEntriesByName(url).pop();
+    const entry = /** @type {PerformanceResourceTiming | undefined} */ (performance.getEntriesByName(url).pop());
     performance.clearResourceTimings();
     if (entry && entry.requestStart > 0 && entry.responseStart >= entry.requestStart) {
       return { rtt: entry.responseStart - entry.requestStart };
@@ -43,6 +53,12 @@ async function ping(timeout) {
   }
 }
 
+/**
+ * The HTTP/TCP probe: pings every `interval` ms and posts the results.
+ * @param {number} id  run id; the loop ends once it is no longer current
+ * @param {number} interval  ms
+ * @param {number} timeout  ms
+ */
 async function loop(id, interval, timeout) {
   let last = Date.now();
   while (id === run) {
@@ -52,7 +68,7 @@ async function loop(id, interval, timeout) {
     const t0 = performance.now();
     const r = await ping(timeout);
     if (id !== run) return;
-    if (r.rtt === null && r.wall > timeout + PAUSE_MS) {
+    if (r.rtt === null && (r.wall ?? 0) > timeout + PAUSE_MS) {
       // The request outlived its own timeout by far: the timer could not fire,
       // so the machine was asleep. Not a network failure.
       postMessage({ type: "pause", from: t, to: Date.now() });
@@ -64,8 +80,12 @@ async function loop(id, interval, timeout) {
   }
 }
 
-// Clock for the UDP probe, which has to live on the page (RTCPeerConnection
-// is not available in workers): one tick per interval, on schedule.
+/**
+ * Clock for the UDP probe, which has to live on the page (RTCPeerConnection
+ * is not available in workers): one tick per interval, on schedule.
+ * @param {number} id  run id; the clock stops once it is no longer current
+ * @param {number} interval  ms
+ */
 async function ticks(id, interval) {
   let next = performance.now();
   while (id === run) {
