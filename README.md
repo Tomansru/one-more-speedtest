@@ -134,7 +134,7 @@ the page is opened by a domain name, also pass
 | Tag                          | Built from                          |
 |------------------------------|-------------------------------------|
 | `latest`, `1`, `1.2`, `1.2.3` | Release tags like `v1.2.3`          |
-| `dev-latest`, `sha-<commit>` | Every push to `main`                |
+| `dev-latest`                 | Every push to `main`                |
 
 Pull requests only build the image to check it, without publishing it.
 
