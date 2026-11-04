@@ -2,9 +2,9 @@ name: Docker
 
 # Image tags published to ghcr.io/<owner>/one-more-speedtest:
 #   tag v1.2.3       -> 1.2.3, 1.2, 1, latest (no latest for pre-releases like v1.3.0-rc.1)
-#   push to main     -> dev-latest, sha-<short sha>
+#   push to main     -> dev-latest
 #   pull request     -> built only, never pushed
-# Old untagged versions and old sha-* tags are removed by registry-cleanup.yml.
+# Old untagged versions are removed by registry-cleanup.yml.
 on:
   push:
     branches: [main]
@@ -49,7 +49,6 @@ jobs:
             type=semver,pattern={{major}}
             type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') && !contains(github.ref_name, '-') }}
             type=raw,value=dev-latest,enable={{is_default_branch}}
-            type=sha,format=short,enable={{is_default_branch}}
             type=ref,event=pr
 
       - uses: docker/build-push-action@v7

@@ -1,9 +1,8 @@
 name: Registry cleanup
 
 # Removes old image versions from ghcr.io/<owner>/one-more-speedtest:
-#   - sha-* tags beyond the 10 newest (dev builds from main)
-#   - untagged versions: old dev-latest builds, leftovers of the above, and old
-#     provenance attestations
+#   - untagged versions: old dev-latest builds and old provenance attestations
+#   - leftover sha-* tags from before the Docker workflow stopped making them
 # Platform manifests (amd64, arm64) that belong to a tagged image are untagged
 # too, but the action detects them and never deletes them.
 # Release tags (latest, 1.2.3, 1.2, 1) and dev-latest are never touched.
@@ -34,7 +33,6 @@ jobs:
         with:
           package: one-more-speedtest
           delete-tags: sha-*
-          keep-n-tagged: 10
           delete-untagged: true
           # Scheduled runs have no inputs, so they really delete.
           dry-run: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
