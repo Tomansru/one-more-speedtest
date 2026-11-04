@@ -4,7 +4,6 @@ name: Docker
 #   tag v1.2.3       -> 1.2.3, 1.2, 1, latest (no latest for pre-releases like v1.3.0-rc.1)
 #   push to main     -> dev-latest
 #   pull request     -> built only, never pushed
-# Old untagged versions are removed by registry-cleanup.yml.
 on:
   push:
     branches: [main]
@@ -58,10 +57,7 @@ jobs:
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          # Buildx adds a provenance attestation per platform by default. In GHCR
-          # each one shows up as an extra untagged "sha256:..." version, so turn
-          # them off. A push now creates one tagged index plus one untagged
-          # manifest per platform (amd64, arm64); those two are required.
+          # Attestations show up in GHCR as extra untagged versions.
           provenance: false
           sbom: false
           cache-from: type=gha
