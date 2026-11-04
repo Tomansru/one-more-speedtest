@@ -221,8 +221,8 @@ as they are. Editors with TypeScript support check them as you type; to check
 them all (CI does too):
 
 ```sh
-npx -p typescript@6 tsc -p tsconfig.json         # page scripts
-npx -p typescript@6 tsc -p tsconfig.worker.json  # the monitor's worker
+npx -p typescript@7 tsc -p tsconfig.json         # page scripts
+npx -p typescript@7 tsc -p tsconfig.worker.json  # the monitor's worker
 ```
 
 ## License
