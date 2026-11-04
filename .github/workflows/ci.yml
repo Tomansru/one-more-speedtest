@@ -40,5 +40,5 @@ jobs:
 
       - name: Type-check JavaScript
         run: |
-          npx --yes -p typescript@6 tsc -p tsconfig.json
-          npx --yes -p typescript@6 tsc -p tsconfig.worker.json
+          npx --yes -p typescript@7 tsc -p tsconfig.json
+          npx --yes -p typescript@7 tsc -p tsconfig.worker.json
